@@ -1,0 +1,22 @@
+Timestamp,Vehicle_ID,Class,Direction
+2026-03-15 15:02:14,2,truck,Inbound
+2026-03-15 15:02:14,13,car,Inbound
+2026-03-15 15:02:17,60,motorcycle,Outbound
+2026-03-15 15:02:18,71,motorcycle,Inbound
+2026-03-15 15:02:20,8,car,Inbound
+2026-03-15 15:02:25,31,car,Inbound
+2026-03-15 15:02:32,143,car,Inbound
+2026-03-15 15:02:34,104,car,Inbound
+2026-03-15 15:02:35,210,car,Outbound
+2026-03-15 15:02:37,182,car,Inbound
+2026-03-15 15:02:39,277,truck,Outbound
+2026-03-15 15:02:42,193,car,Inbound
+2026-03-15 15:02:46,339,car,Outbound
+2026-03-15 15:02:54,393,car,Outbound
+2026-03-15 15:02:55,325,car,Inbound
+2026-03-15 15:03:01,505,car,Outbound
+2026-03-15 15:03:06,543,car,Outbound
+2026-03-15 15:03:09,580,truck,Outbound
+2026-03-15 15:03:11,583,car,Outbound
+2026-03-15 15:03:16,687,car,Outbound
+2026-03-15 15:03:20,736,car,Outbound
