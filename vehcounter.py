@@ -67,11 +67,11 @@ LINE_LABEL_COLORS_HEX = ["#00dcff", "#32eb64", "#00a5ff"]  # for Tkinter
 # ฟังก์ชันหลักนับยานพาหนะ
 # ==========================================
 
-def run_counter(source, export_path, fast_mode, num_lines, line_labels):
+def run_counter(source, export_path, fast_mode, num_lines, line_labels, model_size="yolov8n.pt", conf_thresh=0.20, iou_thresh=0.50):
     global line_pts, stop_counting, manual_reload
 
-    print(f"กำลังโหลดโมเดลและ Source: {source}")
-    model = YOLO("yolov8n.pt")
+    print(f"กำลังโหลดโมเดล: {model_size} และ Source: {source}")
+    model = YOLO(model_size)
 
     vehicle_classes = [2, 3, 5, 7]
     class_names = model.names
@@ -273,7 +273,7 @@ def run_counter(source, export_path, fast_mode, num_lines, line_labels):
 
         tracking_imgsz = 320 if fast_mode else 640
         results = model.track(frame, persist=True, classes=vehicle_classes,
-                               imgsz=tracking_imgsz, conf=0.20, iou=0.50, verbose=False)
+                               imgsz=tracking_imgsz, conf=conf_thresh, iou=iou_thresh, verbose=False)
 
         # วาดเส้นทุกเส้นบน frame
         for li, (ls, le) in enumerate(lines):
@@ -563,6 +563,10 @@ def open_gui():
     export_var     = tk.StringVar(value="vehicle_counts.xlsx")
     fast_mode_var  = tk.BooleanVar(value=True)
     num_lines_var  = tk.IntVar(value=1)
+    
+    # Advanced Settings
+    model_size_var = tk.StringVar(value="yolov8n.pt")
+    sensitivity_var = tk.StringVar(value="Normal (0.25)")
 
     # ชื่อเส้นแต่ละเส้น
     line_name_vars = [tk.StringVar(value=DEFAULT_LINE_NAMES[i]) for i in range(3)]
@@ -611,8 +615,21 @@ def open_gui():
             export_path = "vehicle_counts.xlsx"
 
         fast_mode = fast_mode_var.get()
+        model_size = model_size_var.get()
+        
+        # แปลงค่า Sensitivity เป็น Confidence Threshold
+        sens_str = sensitivity_var.get()
+        if "High" in sens_str:
+            conf_th = 0.15 # จับง่ายขึ้น (อาจเจอขยะ)
+        elif "Low" in sens_str:
+            conf_th = 0.40 # จับยากขึ้น (แม่นยำสูง)
+        else:
+            conf_th = 0.25 # Normal
+            
+        iou_th = 0.45
+
         root.destroy()
-        run_counter(source, export_path, fast_mode, n, labels)
+        run_counter(source, export_path, fast_mode, n, labels, model_size, conf_th, iou_th)
 
     def on_enter_btn(e): start_btn.configure(bg=BTN_HOVER)
     def on_leave_btn(e): start_btn.configure(bg=BTN_GREEN)
@@ -628,8 +645,16 @@ def open_gui():
     tk.Frame(root, bg=ACCENT, height=2).pack(fill="x")
 
     # ======== CONTENT =========
-    content = tk.Frame(root, bg=BG)
-    content.pack(fill="both", expand=True, padx=24, pady=10)
+    main_canvas = tk.Canvas(root, bg=BG, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(root, orient="vertical", command=main_canvas.yview)
+    content = tk.Frame(main_canvas, bg=BG)
+    
+    content.bind("<Configure>", lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all")))
+    main_canvas.create_window((0, 0), window=content, anchor="nw", width=580)
+    main_canvas.configure(yscrollcommand=scrollbar.set)
+    
+    main_canvas.pack(side="left", fill="both", expand=True, padx=(24, 0), pady=10)
+    scrollbar.pack(side="right", fill="y", pady=10)
 
     # VIDEO SOURCE
     tk.Label(content, text="VIDEO SOURCE", font=FONT_HEAD,
@@ -702,11 +727,36 @@ def open_gui():
     # เส้นคั่น
     tk.Frame(content, bg=BORDER, height=1).grid(row=10, column=0, sticky="ew", pady=(6, 2))
 
+    # ADVANCED SETTINGS
+    tk.Label(content, text="ADVANCED SETTINGS  (จูนการจับมอเตอร์ไซค์)", font=FONT_HEAD,
+             bg=BG, fg=ACCENT).grid(row=11, column=0, sticky="w", pady=(4, 6))
+
+    adv_f1 = tk.Frame(content, bg=BG)
+    adv_f1.grid(row=12, column=0, sticky="ew", padx=(16, 0), pady=2)
+    tk.Label(adv_f1, text="ความแม่นยำ AI (Model):", font=FONT_BODY, bg=BG, fg=TEXT).pack(side="left")
+    
+    model_menu = tk.OptionMenu(adv_f1, model_size_var, 
+                               "yolov8n.pt", "yolov8s.pt", "yolov8m.pt")
+    model_menu.config(bg=PANEL, fg=TEXT, activebackground=BORDER, relief="flat", highlightthickness=0)
+    model_menu["menu"].config(bg=PANEL, fg=TEXT)
+    model_menu.pack(side="left", padx=8)
+    tk.Label(adv_f1, text="*(s หรือ m จะจับแม่นขึ้นมาก แต่กินเครื่อง)*", font=FONT_SMALL, bg=BG, fg=MUTED).pack(side="left")
+
+    adv_f2 = tk.Frame(content, bg=BG)
+    adv_f2.grid(row=13, column=0, sticky="ew", padx=(16, 0), pady=2)
+    tk.Label(adv_f2, text="ความไว (Sensitivity):", font=FONT_BODY, bg=BG, fg=TEXT).pack(side="left")
+    
+    sens_menu = tk.OptionMenu(adv_f2, sensitivity_var, 
+                               "High (0.15) จับง่าย", "Normal (0.25)", "Low (0.40) ชัวร์เท่านั้น")
+    sens_menu.config(bg=PANEL, fg=TEXT, activebackground=BORDER, relief="flat", highlightthickness=0)
+    sens_menu["menu"].config(bg=PANEL, fg=TEXT)
+    sens_menu.pack(side="left", padx=8)
+
     # Settings row
     settings_f = tk.Frame(content, bg=BG)
-    settings_f.grid(row=11, column=0, sticky="ew", pady=4)
+    settings_f.grid(row=14, column=0, sticky="ew", pady=(8, 4))
     tk.Checkbutton(settings_f,
-                   text="⚡  Fast Mode  (ความเร็วสูงสุด — ลดติ๊กเพื่อเพิ่มความชัด)",
+                   text="⚡  Fast Mode  (ลดสเกลภาพให้เร็วขึ้น — ถ้ากดยกเลิกจะจับรถเล็กได้ดีขึ้น)",
                    variable=fast_mode_var,
                    bg=BG, fg=TEXT, selectcolor=PANEL,
                    activebackground=BG, activeforeground=ACCENT,
@@ -714,7 +764,7 @@ def open_gui():
 
     # Export row
     csv_row = tk.Frame(content, bg=BG)
-    csv_row.grid(row=12, column=0, sticky="ew", pady=(6, 0))
+    csv_row.grid(row=15, column=0, sticky="ew", pady=(6, 0))
     export_label = tk.Label(csv_row, text="📊  Export Excel:", font=FONT_BODY,
                              bg=BG, fg=MUTED)
     export_label.pack(side="left", padx=(0, 8))
