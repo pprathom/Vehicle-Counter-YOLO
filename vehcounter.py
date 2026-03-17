@@ -197,14 +197,13 @@ def run_counter(source, export_path, fast_mode, num_lines, line_labels):
     cv2.namedWindow("Dashboard")
 
     # --- Dashboard ขนาดปรับตามจำนวนเส้น ---
-    # แต่ละเส้นใช้พื้นที่ประมาณ 100–140px (header+inbound+outbound rows)
     rows_per_line = 5   # header + 4 vehicle classes max
-    px_per_row = 24
-    section_h = 14 + rows_per_line * px_per_row + 18  # ~150px per line
-    dash_w = 400
-    dash_content_h = 65 + 44 + num_lines * section_h  # header + total box + sections
-    btn_area_h = 44 + 56 + 24  # reload btn + stop btn + gap
-    dash_h = dash_content_h + btn_area_h + 30
+    px_per_row    = 24
+    section_h     = 14 + rows_per_line * px_per_row + 18
+    dash_w        = 400
+    dash_content_h= 65 + 44 + num_lines * section_h
+    btn_area_h    = 44 + 56 + 24
+    dash_h        = dash_content_h + btn_area_h + 30
 
     btn_w, btn_h = 170, 44
     btn_x1 = (dash_w - btn_w) // 2
@@ -224,19 +223,22 @@ def run_counter(source, export_path, fast_mode, num_lines, line_labels):
     last_frame_time = datetime.now()
 
     # --- สี Palette ---
-    BG_COLOR     = (18, 18, 28)
-    HEADER_COLOR = (28, 28, 45)
-    ACCENT       = (0, 200, 255)
-    TEXT_COLOR   = (220, 220, 230)
-    MUTED_COLOR  = (110, 110, 130)
-    BTN_STOP     = (40, 50, 200)
-    BTN_RELOAD   = (20, 140, 200)
-    DIVIDER_COLOR= (40, 40, 60)
+    BG_COLOR       = (18, 18, 28)
+    HEADER_COLOR   = (28, 28, 45)
+    ACCENT         = (0, 200, 255)
+    TEXT_COLOR     = (220, 220, 230)
+    MUTED_COLOR    = (110, 110, 130)
+    BTN_STOP       = (40, 50, 200)
+    BTN_RELOAD     = (20, 140, 200)
+    DIVIDER_COLOR  = (40, 40, 60)
     INBOUND_COLOR  = (80, 220, 130)
     OUTBOUND_COLOR = (80, 130, 255)
 
     stop_counting = False
     manual_reload = False
+    
+    frame_count = 0
+    last_dashboard = None
 
     while True:
         if stop_counting:
@@ -267,10 +269,11 @@ def run_counter(source, export_path, fast_mode, num_lines, line_labels):
 
         last_frame_time = datetime.now()
         frame = cv2.resize(frame, (new_w, new_h))
+        frame_count += 1
 
         tracking_imgsz = 320 if fast_mode else 640
         results = model.track(frame, persist=True, classes=vehicle_classes,
-                               imgsz=tracking_imgsz, verbose=False)
+                               imgsz=tracking_imgsz, conf=0.20, iou=0.50, verbose=False)
 
         # วาดเส้นทุกเส้นบน frame
         for li, (ls, le) in enumerate(lines):
@@ -290,9 +293,10 @@ def run_counter(source, export_path, fast_mode, num_lines, line_labels):
                 x1, y1, x2, y2 = map(int, box)
                 cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
 
-                track_history[track_id].append((cx, cy))
-                if len(track_history[track_id]) > 30:
-                    track_history[track_id].pop(0)
+                hist = track_history[track_id]
+                hist.append((cx, cy))
+                if len(hist) > 30:
+                    hist.pop(0)
 
                 cls_name = class_names[class_id]
                 label = f"{cls_name}  #{track_id}"
@@ -303,8 +307,8 @@ def run_counter(source, export_path, fast_mode, num_lines, line_labels):
                 cv2.putText(frame, label, (x1 + 3, y1 - 4),
                             FONT, 0.4, (10, 10, 10), 1, cv2.LINE_AA)
 
-                hist = track_history[track_id]
-                for i in range(1, len(hist)):
+                # เร่งการวาด trail โดยลดความถี่ในการวาดถ้าเฟรมตกค้าง
+                for i in range(max(1, len(hist)-10), len(hist)):
                     alpha = int(255 * i / len(hist))
                     cv2.line(frame, hist[i-1], hist[i], (alpha // 2, alpha, 200), 1, cv2.LINE_AA)
                 cv2.circle(frame, (cx, cy), 4, (255, 255, 255), -1)
@@ -327,102 +331,102 @@ def run_counter(source, export_path, fast_mode, num_lines, line_labels):
                                 export_data_per_line[li].append(
                                     [ts, track_id, cls_name, direction])
 
-        # ====================
-        # วาด Dashboard
-        # ====================
-        dashboard = np.zeros((dash_h, dash_w, 3), dtype=np.uint8)
-        dashboard[:] = BG_COLOR
-
-        # Header
-        cv2.rectangle(dashboard, (0, 0), (dash_w, 58), HEADER_COLOR, -1)
-        draw_text_centered(dashboard, "VEHICLE COUNTER", dash_w // 2, 24, FONT, 0.65, ACCENT, 2)
-        draw_text_centered(dashboard, datetime.now().strftime("%H:%M:%S"),
-                           dash_w // 2, 46, FONT, 0.42, MUTED_COLOR, 1)
-
-        # Grand total
-        grand_total = sum(
-            sum(c["inbound"].values()) + sum(c["outbound"].values())
-            for c in counts_per_line
-        )
-        cv2.rectangle(dashboard, (15, 65), (dash_w - 15, 105), DIVIDER_COLOR, -1)
-        draw_text_centered(dashboard, f"TOTAL  {grand_total}", dash_w // 2, 92,
-                           FONT, 0.72, (255, 255, 255), 2)
-
-        cv2.line(dashboard, (15, 113), (dash_w - 15, 113), DIVIDER_COLOR, 1)
-
-        y = 122
-        for li in range(num_lines):
-            lc = LINE_COLORS[li]
-            lbl = line_labels[li]
-            cnt = counts_per_line[li]
-            total_in  = sum(cnt["inbound"].values())
-            total_out = sum(cnt["outbound"].values())
-            line_total = total_in + total_out
-
-            # Line section header
-            cv2.rectangle(dashboard, (14, y), (dash_w - 14, y + 20), (28, 28, 45), -1)
-            cv2.rectangle(dashboard, (14, y), (14 + 4, y + 20), lc, -1)  # color bar
-            cv2.putText(dashboard, f"  {lbl}", (20, y + 15),
-                        FONT, 0.5, lc, 1, cv2.LINE_AA)
-            total_str = f"= {line_total}"
-            (tw, _), _ = cv2.getTextSize(total_str, FONT, 0.5, 2)
-            cv2.putText(dashboard, total_str, (dash_w - 20 - tw, y + 15),
-                        FONT, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
-            y += 24
-
-            # Inbound row
-            cv2.putText(dashboard, "  IN", (22, y + 12), FONT, 0.4, INBOUND_COLOR, 1, cv2.LINE_AA)
-            xb = 60
-            for cls_nm, count in cnt["inbound"].items():
-                tag = f"{cls_nm}:{count}"
-                (tw2, _), _ = cv2.getTextSize(tag, FONT, 0.38, 1)
-                cv2.rectangle(dashboard, (xb, y + 1), (xb + tw2 + 8, y + 15), (0, 80, 40), -1)
-                cv2.putText(dashboard, tag, (xb + 4, y + 12),
-                            FONT, 0.38, INBOUND_COLOR, 1, cv2.LINE_AA)
-                xb += tw2 + 12
-            y += 20
-
-            # Outbound row
-            cv2.putText(dashboard, "  OUT", (22, y + 12), FONT, 0.4, OUTBOUND_COLOR, 1, cv2.LINE_AA)
-            xb = 66
-            for cls_nm, count in cnt["outbound"].items():
-                tag = f"{cls_nm}:{count}"
-                (tw2, _), _ = cv2.getTextSize(tag, FONT, 0.38, 1)
-                cv2.rectangle(dashboard, (xb, y + 1), (xb + tw2 + 8, y + 15), (30, 20, 90), -1)
-                cv2.putText(dashboard, tag, (xb + 4, y + 12),
-                            FONT, 0.38, OUTBOUND_COLOR, 1, cv2.LINE_AA)
-                xb += tw2 + 12
-            y += 22
-
-            # Divider between lines
-            if li < num_lines - 1:
-                cv2.line(dashboard, (20, y), (dash_w - 20, y), DIVIDER_COLOR, 1)
-                y += 8
-
-        # Buttons
-        draw_rounded_rect(dashboard, (rld_x1, rld_y1), (rld_x2, rld_y2), BTN_RELOAD, radius=10)
-        draw_text_centered(dashboard, "RELOAD STREAM",
-                           (rld_x1 + rld_x2) // 2, rld_y1 + 20, FONT, 0.5, (255, 255, 255), 2)
-        draw_text_centered(dashboard, "(or press  R)",
-                           (rld_x1 + rld_x2) // 2, rld_y1 + 36, FONT, 0.35, (180, 220, 230))
-
-        draw_rounded_rect(dashboard, (btn_x1, btn_y1), (btn_x2, btn_y2), BTN_STOP, radius=10)
-        draw_text_centered(dashboard, "STOP & EXPORT",
-                           (btn_x1 + btn_x2) // 2, btn_y1 + 20, FONT, 0.5, (255, 255, 255), 2)
-        draw_text_centered(dashboard, "(or press  Q)",
-                           (btn_x1 + btn_x2) // 2, btn_y1 + 36, FONT, 0.35, (180, 200, 255))
-
-        mode_label = "FAST MODE" if fast_mode else "QUALITY MODE"
-        mode_color = (0, 200, 100) if fast_mode else (200, 140, 0)
-        cv2.circle(dashboard, (22, dash_h - 12), 5, mode_color, -1)
-        cv2.putText(dashboard, mode_label, (32, dash_h - 7),
-                    FONT, 0.35, mode_color, 1, cv2.LINE_AA)
-
-        cv2.imshow("Dashboard", dashboard)
-
-        # Overlay บน frame
+        # ปรับปรุง: คาดการณ์ Grand Total (ใช้สำหรับมุมซ้ายบนของจอด้วย)
         grand_in  = sum(sum(c["inbound"].values())  for c in counts_per_line)
         grand_out = sum(sum(c["outbound"].values()) for c in counts_per_line)
+        grand_total = grand_in + grand_out
+
+        # ====================
+        # วาด Dashboard (วาดใหม่ทุกๆ 10 เฟรมเพื่อลดโหลด)
+        # ====================
+        if frame_count % 10 == 0 or last_dashboard is None:
+            dashboard = np.zeros((dash_h, dash_w, 3), dtype=np.uint8)
+            dashboard[:] = BG_COLOR
+
+            # Header
+            cv2.rectangle(dashboard, (0, 0), (dash_w, 58), HEADER_COLOR, -1)
+            draw_text_centered(dashboard, "VEHICLE COUNTER", dash_w // 2, 24, FONT, 0.65, ACCENT, 2)
+            draw_text_centered(dashboard, datetime.now().strftime("%H:%M:%S"),
+                               dash_w // 2, 46, FONT, 0.42, MUTED_COLOR, 1)
+
+            cv2.rectangle(dashboard, (15, 65), (dash_w - 15, 105), DIVIDER_COLOR, -1)
+            draw_text_centered(dashboard, f"TOTAL  {grand_total}", dash_w // 2, 92,
+                               FONT, 0.72, (255, 255, 255), 2)
+
+            cv2.line(dashboard, (15, 113), (dash_w - 15, 113), DIVIDER_COLOR, 1)
+
+            y = 122
+            for li in range(num_lines):
+                lc  = LINE_COLORS[li]
+                lbl = line_labels[li]
+                cnt = counts_per_line[li]
+                total_in  = sum(cnt["inbound"].values())
+                total_out = sum(cnt["outbound"].values())
+                line_total = total_in + total_out
+
+                # Line section header
+                cv2.rectangle(dashboard, (14, y), (dash_w - 14, y + 20), (28, 28, 45), -1)
+                cv2.rectangle(dashboard, (14, y), (18, y + 20), lc, -1)
+                cv2.putText(dashboard, f"  {lbl}", (20, y + 15),
+                            FONT, 0.5, lc, 1, cv2.LINE_AA)
+                total_str = f"= {line_total}"
+                (tw, _), _ = cv2.getTextSize(total_str, FONT, 0.5, 2)
+                cv2.putText(dashboard, total_str, (dash_w - 20 - tw, y + 15),
+                            FONT, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
+                y += 24
+
+                # Inbound row (compact tags)
+                cv2.putText(dashboard, "  IN", (22, y + 12), FONT, 0.4, INBOUND_COLOR, 1, cv2.LINE_AA)
+                xb = 60
+                for cls_nm, count in cnt["inbound"].items():
+                    tag = f"{cls_nm}:{count}"
+                    (tw2, _), _ = cv2.getTextSize(tag, FONT, 0.38, 1)
+                    cv2.rectangle(dashboard, (xb, y + 1), (xb + tw2 + 8, y + 15), (0, 80, 40), -1)
+                    cv2.putText(dashboard, tag, (xb + 4, y + 12),
+                                FONT, 0.38, INBOUND_COLOR, 1, cv2.LINE_AA)
+                    xb += tw2 + 12
+                y += 20
+
+                # Outbound row (compact tags)
+                cv2.putText(dashboard, "  OUT", (22, y + 12), FONT, 0.4, OUTBOUND_COLOR, 1, cv2.LINE_AA)
+                xb = 66
+                for cls_nm, count in cnt["outbound"].items():
+                    tag = f"{cls_nm}:{count}"
+                    (tw2, _), _ = cv2.getTextSize(tag, FONT, 0.38, 1)
+                    cv2.rectangle(dashboard, (xb, y + 1), (xb + tw2 + 8, y + 15), (30, 20, 90), -1)
+                    cv2.putText(dashboard, tag, (xb + 4, y + 12),
+                                FONT, 0.38, OUTBOUND_COLOR, 1, cv2.LINE_AA)
+                    xb += tw2 + 12
+                y += 22
+
+                # Divider between lines
+                if li < num_lines - 1:
+                    cv2.line(dashboard, (20, y), (dash_w - 20, y), DIVIDER_COLOR, 1)
+                    y += 8
+
+            # Buttons
+            draw_rounded_rect(dashboard, (rld_x1, rld_y1), (rld_x2, rld_y2), BTN_RELOAD, radius=10)
+            draw_text_centered(dashboard, "RELOAD STREAM",
+                               (rld_x1 + rld_x2) // 2, rld_y1 + 20, FONT, 0.5, (255, 255, 255), 2)
+            draw_text_centered(dashboard, "(or press  R)",
+                               (rld_x1 + rld_x2) // 2, rld_y1 + 36, FONT, 0.35, (180, 220, 230))
+
+            draw_rounded_rect(dashboard, (btn_x1, btn_y1), (btn_x2, btn_y2), BTN_STOP, radius=10)
+            draw_text_centered(dashboard, "STOP & EXPORT",
+                               (btn_x1 + btn_x2) // 2, btn_y1 + 20, FONT, 0.5, (255, 255, 255), 2)
+            draw_text_centered(dashboard, "(or press  Q)",
+                               (btn_x1 + btn_x2) // 2, btn_y1 + 36, FONT, 0.35, (180, 200, 255))
+
+            mode_label = "FAST MODE" if fast_mode else "QUALITY MODE"
+            mode_color = (0, 200, 100) if fast_mode else (200, 140, 0)
+            cv2.circle(dashboard, (22, dash_h - 12), 5, mode_color, -1)
+            cv2.putText(dashboard, mode_label, (32, dash_h - 7),
+                        FONT, 0.35, mode_color, 1, cv2.LINE_AA)
+
+            last_dashboard = dashboard
+        cv2.imshow("Dashboard", last_dashboard)
+
+        # Overlay มุมซ้ายบนบน frame (อันนี้อัปเดตทุกเฟรมได้ ไม่กินโหลดเท่าไหร่)
         ov = frame.copy()
         cv2.rectangle(ov, (0, 0), (210, 28), (10, 10, 20), -1)
         cv2.addWeighted(ov, 0.65, frame, 0.35, 0, frame)
@@ -604,7 +608,7 @@ def open_gui():
         labels = [line_name_vars[i].get().strip() or DEFAULT_LINE_NAMES[i] for i in range(n)]
         export_path = export_var.get().strip()
         if not export_path:
-            export_path = "vehicle_counts.csv" if n == 1 else "vehicle_counts.xlsx"
+            export_path = "vehicle_counts.xlsx"
 
         fast_mode = fast_mode_var.get()
         root.destroy()
