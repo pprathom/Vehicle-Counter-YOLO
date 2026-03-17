@@ -1,0 +1,25 @@
+# Python Virtual Environment
+venv/
+env/
+.env
+
+# Cache files
+__pycache__/
+*.pyc
+
+# IDEs
+.vscode/
+.idea/
+
+# YOLOv8 Model Weights (ไฟล์ AI ขนาดใหญ่ ไม่ควรเอาขึ้น Git)
+*.pt
+yolov8n.pt
+runs/
+
+# Data outputs
+*.csv
+vehicle_counts.csv
+
+# macOS/Windows system files
+.DS_Store
+Thumbs.db
