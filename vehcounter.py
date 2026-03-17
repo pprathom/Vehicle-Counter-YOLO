@@ -1,5 +1,4 @@
 import cv2
-import argparse
 import csv
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -9,52 +8,32 @@ from ultralytics import YOLO
 from collections import defaultdict
 
 def ccw(A, B, C):
-    """
-    เช็คการจัดเรียงจุดทวนเข็มนาฬิกา เพื่อใช้หาการตัดกันของเส้น
-    """
     return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
 
 def intersect(A, B, C, D):
-    """
-    ตรวจว่าสัดส่วนของเส้นตรง AB ตัดกับ CD หรือไม่
-    """
     return ccw(A, C, D) != ccw(B, C, D) and ccw(A, B, C) != ccw(A, B, D)
 
-# ตัวแปร Global สำหรับรองรับการวาดเส้น
+# ตัวแปร Global
 line_pts = []
 current_mouse_pos = None
 stop_counting = False
 manual_reload = False
 
-def draw_line(event, x, y, flags, param):
-    """
-    Callback function สำหรับรับค่าการคลิกเมาส์ 2 จุดบน OpenCV Window
-    และติดตามตำแหน่งเมาส์เพื่อวาดเส้นนำสายตา
-    """
+def draw_line_cb(event, x, y, flags, param):
     global line_pts, current_mouse_pos
-
     if event == cv2.EVENT_MOUSEMOVE:
         current_mouse_pos = (x, y)
-
     elif event == cv2.EVENT_LBUTTONDOWN:
-        # ถ้าคลิกครบ 2 จุดแล้วให้เริ่มใหม่
         if len(line_pts) == 2:
             line_pts = []
         line_pts.append((x, y))
 
 def click_stop_button(event, x, y, flags, param):
-    """
-    Callback function สำหรับตรวจสอบการคลิกปุ่ม Stop & Export และ Reload บนหน้าจอ
-    """
     global stop_counting, manual_reload
     if event == cv2.EVENT_LBUTTONDOWN:
         btn_x1, btn_y1, btn_x2, btn_y2, rld_x1, rld_y1, rld_x2, rld_y2 = param
-
-        # เช็คปุ่ม Stop
         if btn_x1 <= x <= btn_x2 and btn_y1 <= y <= btn_y2:
             stop_counting = True
-
-        # เช็คปุ่ม Reload
         if rld_x1 <= x <= rld_x2 and rld_y1 <= y <= rld_y2:
             manual_reload = True
 
@@ -63,51 +42,46 @@ def click_stop_button(event, x, y, flags, param):
 # =========================================
 
 def draw_rounded_rect(img, pt1, pt2, color, radius=12, thickness=-1):
-    """วาด Rectangle มุมมน"""
     x1, y1 = pt1
     x2, y2 = pt2
-    # Fill main rectangles
     cv2.rectangle(img, (x1 + radius, y1), (x2 - radius, y2), color, thickness)
     cv2.rectangle(img, (x1, y1 + radius), (x2, y2 - radius), color, thickness)
-    # Fill corners
     cv2.circle(img, (x1 + radius, y1 + radius), radius, color, thickness)
     cv2.circle(img, (x2 - radius, y1 + radius), radius, color, thickness)
     cv2.circle(img, (x1 + radius, y2 - radius), radius, color, thickness)
     cv2.circle(img, (x2 - radius, y2 - radius), radius, color, thickness)
 
 def draw_text_centered(img, text, center_x, y, font, scale, color, thickness=1):
-    """วาดข้อความ align center"""
-    (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+    (tw, _), _ = cv2.getTextSize(text, font, scale, thickness)
     cv2.putText(img, text, (center_x - tw // 2, y), font, scale, color, thickness, cv2.LINE_AA)
 
-def run_counter(source, export_csv, fast_mode):
-    """
-    ฟังก์ชันหลักในการนับยานพาหนะเมื่อได้ Source และ Export Path แล้ว
-    """
-    global line_pts, stop_counting
+# สีเส้นนับแต่ละเส้น (BGR)
+LINE_COLORS = [
+    (0, 220, 255),   # Cyan   — Line 1
+    (50, 235, 100),  # Green  — Line 2
+    (0, 165, 255),   # Orange — Line 3
+]
+LINE_LABEL_COLORS_HEX = ["#00dcff", "#32eb64", "#00a5ff"]  # for Tkinter
 
-    print(f"กำลังเปิดโหลดโมเดลและ Source: {source}")
+# ==========================================
+# ฟังก์ชันหลักนับยานพาหนะ
+# ==========================================
+
+def run_counter(source, export_path, fast_mode, num_lines, line_labels):
+    global line_pts, stop_counting, manual_reload
+
+    print(f"กำลังโหลดโมเดลและ Source: {source}")
     model = YOLO("yolov8n.pt")
 
     vehicle_classes = [2, 3, 5, 7]
     class_names = model.names
 
-    track_history = defaultdict(list)
-    counted_ids = set()
+    FONT = cv2.FONT_HERSHEY_SIMPLEX
 
-    counts = {
-        "inbound": defaultdict(int),
-        "outbound": defaultdict(int)
-    }
-
-    export_data = []
-
-    # ฟังก์ชันช่วยโหลด VideoCapture เพื่อให้เรียกซ้ำตอน reload ได้
     def connect_stream():
         nonlocal cap
         if 'cap' in locals() and cap is not None:
             cap.release()
-
         cap_source = int(source) if source.isdigit() else source
         cap = cv2.VideoCapture(cap_source)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -117,106 +91,128 @@ def run_counter(source, export_csv, fast_mode):
     cap = connect_stream()
 
     if not cap.isOpened():
-        print(f"Error: ไม่สามารถเปิด video/stream '{source}' ได้")
-        messagebox.showerror("Error", f"ไม่สามารถเปิด Video หรือ Streaming นี้ได้: {source}")
+        messagebox.showerror("Error", f"ไม่สามารถเปิด Video หรือ Streaming นี้ได้:\n{source}")
         return
 
     ret, frame = cap.read()
     if not ret:
-        print("Error: ไม่สามารถอ่านเฟรมแรกจาก video ได้")
         messagebox.showerror("Error", "อ่านเฟรมแรกของวิดีโอไม่ได้")
         cap.release()
         return
 
     h, w = frame.shape[:2]
     max_height = 480
-    scale = 1.0
     if h > max_height:
         scale = max_height / h
-        new_w = int(w * scale)
-        new_h = int(h * scale)
+        new_w, new_h = int(w * scale), int(h * scale)
     else:
         new_w, new_h = w, h
 
     frame = cv2.resize(frame, (new_w, new_h))
 
     # ==========================================
-    # ส่วนที่ 1: UI สำหรับคลิกวาดเส้น (Setup Line) — อัปเกรด UI
+    # ส่วนที่ 1: วาดเส้นนับทีละเส้น
     # ==========================================
-    FONT = cv2.FONT_HERSHEY_SIMPLEX
-
     cv2.namedWindow("Setup Line")
-    cv2.setMouseCallback("Setup Line", draw_line)
+    cv2.setMouseCallback("Setup Line", draw_line_cb)
 
-    print("===== กำลังตั้งค่าเส้นสมมติ =====")
+    lines = []  # เก็บ (start, end) ของแต่ละเส้น
 
-    while True:
-        temp_frame = frame.copy()
+    for ln_idx in range(num_lines):
+        line_pts = []
+        current_mouse_pos = None
+        label = line_labels[ln_idx]
+        color = LINE_COLORS[ln_idx]
+        header_text = f"SETUP LINE {ln_idx + 1} / {num_lines}  —  {label}"
 
-        # วาดเส้นถ้ามีการคลิกจุด
-        if len(line_pts) >= 1:
-            cv2.circle(temp_frame, line_pts[0], 7, (0, 220, 255), -1)
-            cv2.circle(temp_frame, line_pts[0], 9, (255, 255, 255), 1)
+        while True:
+            temp = frame.copy()
 
-        if len(line_pts) == 1 and current_mouse_pos is not None:
-            cv2.line(temp_frame, line_pts[0], current_mouse_pos, (0, 220, 255), 1, cv2.LINE_AA)
+            # วาดเส้นที่ confirm แล้วก่อนหน้า
+            for prev_i, (ps, pe) in enumerate(lines):
+                pc = LINE_COLORS[prev_i]
+                cv2.line(temp, ps, pe, pc, 2, cv2.LINE_AA)
+                cv2.circle(temp, ps, 5, (255, 255, 255), -1)
+                cv2.circle(temp, pe, 5, (255, 255, 255), -1)
+                cv2.putText(temp, line_labels[prev_i], (ps[0] + 5, ps[1] - 10),
+                            FONT, 0.45, pc, 1, cv2.LINE_AA)
 
-        if len(line_pts) == 2:
-            cv2.line(temp_frame, line_pts[0], line_pts[1], (0, 220, 255), 2, cv2.LINE_AA)
-            cv2.circle(temp_frame, line_pts[1], 7, (0, 220, 255), -1)
-            cv2.circle(temp_frame, line_pts[1], 9, (255, 255, 255), 1)
-            cv2.putText(temp_frame, "Counting Line", (line_pts[0][0] + 5, line_pts[0][1] - 12),
-                        FONT, 0.5, (0, 220, 255), 1, cv2.LINE_AA)
-
-        # แถบคำแนะนำที่ด้านล่าง (สวยงามกว่าเดิม)
-        bar_h = 45
-        overlay = temp_frame.copy()
-        cv2.rectangle(overlay, (0, new_h - bar_h), (new_w, new_h), (15, 15, 15), -1)
-        cv2.addWeighted(overlay, 0.75, temp_frame, 0.25, 0, temp_frame)
-
-        hint = "Click 2 points to draw a counting line  |  [C] Confirm  |  [Q] Quit"
-        draw_text_centered(temp_frame, hint, new_w // 2, new_h - 13, FONT, 0.45, (200, 200, 200), 1)
-
-        # Header bar
-        overlay2 = temp_frame.copy()
-        cv2.rectangle(overlay2, (0, 0), (new_w, 38), (20, 20, 20), -1)
-        cv2.addWeighted(overlay2, 0.8, temp_frame, 0.2, 0, temp_frame)
-        draw_text_centered(temp_frame, "SETUP  COUNTING  LINE", new_w // 2, 25, FONT, 0.65, (0, 220, 255), 2)
-
-        cv2.imshow("Setup Line", temp_frame)
-        key = cv2.waitKey(1) & 0xFF
-
-        if key == ord('c'):
+            # วาดเส้นปัจจุบันที่กำลังวาด
+            if len(line_pts) >= 1:
+                cv2.circle(temp, line_pts[0], 7, color, -1)
+                cv2.circle(temp, line_pts[0], 9, (255, 255, 255), 1)
+            if len(line_pts) == 1 and current_mouse_pos is not None:
+                cv2.line(temp, line_pts[0], current_mouse_pos, color, 1, cv2.LINE_AA)
             if len(line_pts) == 2:
-                line_start, line_end = line_pts[0], line_pts[1]
-                break
-            else:
-                print("กรุณาคลิกให้ครบ 2 จุดก่อนกด 'c' เพื่อยืนยัน")
-        elif key == ord('q'):
-            cap.release()
-            cv2.destroyAllWindows()
-            return
+                cv2.line(temp, line_pts[0], line_pts[1], color, 2, cv2.LINE_AA)
+                cv2.circle(temp, line_pts[1], 7, color, -1)
+                cv2.circle(temp, line_pts[1], 9, (255, 255, 255), 1)
+                cv2.putText(temp, label, (line_pts[0][0] + 5, line_pts[0][1] - 12),
+                            FONT, 0.5, color, 1, cv2.LINE_AA)
+
+            # Hint bar ด้านล่าง
+            ov = temp.copy()
+            cv2.rectangle(ov, (0, new_h - 42), (new_w, new_h), (15, 15, 15), -1)
+            cv2.addWeighted(ov, 0.75, temp, 0.25, 0, temp)
+            draw_text_centered(temp,
+                               "Click 2 points to draw  |  [C] Confirm  |  [Q] Quit",
+                               new_w // 2, new_h - 14, FONT, 0.45, (200, 200, 200))
+
+            # Header bar
+            ov2 = temp.copy()
+            cv2.rectangle(ov2, (0, 0), (new_w, 38), (20, 20, 20), -1)
+            cv2.addWeighted(ov2, 0.8, temp, 0.2, 0, temp)
+            draw_text_centered(temp, header_text, new_w // 2, 25, FONT, 0.58, color, 2)
+
+            cv2.imshow("Setup Line", temp)
+            key = cv2.waitKey(1) & 0xFF
+
+            if key == ord('c'):
+                if len(line_pts) == 2:
+                    lines.append((line_pts[0], line_pts[1]))
+                    break
+                else:
+                    print(f"กรุณาคลิกให้ครบ 2 จุดก่อนกด C (Line {ln_idx + 1})")
+            elif key == ord('q'):
+                cap.release()
+                cv2.destroyAllWindows()
+                return
 
     cv2.destroyWindow("Setup Line")
 
     # ==========================================
-    # ส่วนที่ 2: เริ่มตรวจจับยานพาหนะและนับจำนวน — Dashboard อัปเกรด
+    # ส่วนที่ 2: เริ่มนับยานพาหนะ
     # ==========================================
+    track_history = defaultdict(list)
+
+    # แต่ละเส้นมี counted_ids, counts, export_data เป็นของตัวเอง
+    counted_ids_per_line = [set() for _ in range(num_lines)]
+    counts_per_line = [
+        {"inbound": defaultdict(int), "outbound": defaultdict(int)}
+        for _ in range(num_lines)
+    ]
+    export_data_per_line = [[] for _ in range(num_lines)]
+
     cv2.namedWindow("Vehicle Counting")
     cv2.namedWindow("Dashboard")
 
-    # Dashboard canvas
-    dash_w, dash_h = 380, 520
+    # --- Dashboard ขนาดปรับตามจำนวนเส้น ---
+    # แต่ละเส้นใช้พื้นที่ประมาณ 100–140px (header+inbound+outbound rows)
+    rows_per_line = 5   # header + 4 vehicle classes max
+    px_per_row = 24
+    section_h = 14 + rows_per_line * px_per_row + 18  # ~150px per line
+    dash_w = 400
+    dash_content_h = 65 + 44 + num_lines * section_h  # header + total box + sections
+    btn_area_h = 44 + 56 + 24  # reload btn + stop btn + gap
+    dash_h = dash_content_h + btn_area_h + 30
 
-    # ปุ่ม STOP & EXPORT
-    btn_w, btn_h = 160, 44
+    btn_w, btn_h = 170, 44
     btn_x1 = (dash_w - btn_w) // 2
-    btn_y1 = dash_h - btn_h - 20
+    btn_y1 = dash_h - btn_h - 18
     btn_x2 = btn_x1 + btn_w
     btn_y2 = btn_y1 + btn_h
 
-    # ปุ่ม RELOAD
-    rld_w, rld_h = 160, 44
+    rld_w, rld_h = 170, 44
     rld_x1 = btn_x1
     rld_y1 = btn_y1 - rld_h - 12
     rld_x2 = rld_x1 + rld_w
@@ -225,59 +221,46 @@ def run_counter(source, export_csv, fast_mode):
     cv2.setMouseCallback("Dashboard", click_stop_button,
                          param=(btn_x1, btn_y1, btn_x2, btn_y2, rld_x1, rld_y1, rld_x2, rld_y2))
 
-    global manual_reload
     last_frame_time = datetime.now()
 
     # --- สี Palette ---
-    BG_COLOR      = (18, 18, 28)        # พื้นหลัง dark navy
-    HEADER_COLOR  = (28, 28, 45)        # Header bar
-    ACCENT        = (0, 200, 255)       # Cyan accent
-    INBOUND_COLOR = (80, 220, 130)      # เขียว
-    OUTBOUND_COLOR= (80, 130, 255)      # น้ำเงิน
-    TEXT_COLOR    = (220, 220, 230)     # ข้อความทั่วไป
-    MUTED_COLOR   = (110, 110, 130)     # ข้อความเบา
-    BTN_STOP      = (40, 50, 200)       # ปุ่ม Stop (indigo)
-    BTN_RELOAD    = (20, 140, 200)      # ปุ่ม Reload (teal)
-    DIVIDER_COLOR = (40, 40, 60)        # เส้นคั่น
+    BG_COLOR     = (18, 18, 28)
+    HEADER_COLOR = (28, 28, 45)
+    ACCENT       = (0, 200, 255)
+    TEXT_COLOR   = (220, 220, 230)
+    MUTED_COLOR  = (110, 110, 130)
+    BTN_STOP     = (40, 50, 200)
+    BTN_RELOAD   = (20, 140, 200)
+    DIVIDER_COLOR= (40, 40, 60)
+    INBOUND_COLOR  = (80, 220, 130)
+    OUTBOUND_COLOR = (80, 130, 255)
 
-    # Vehicle class icons
-    cls_icon = {
-        "car":        "🚗",
-        "motorcycle": "🏍",
-        "bus":        "🚌",
-        "truck":      "🚚",
-    }
+    stop_counting = False
+    manual_reload = False
 
     while True:
         if stop_counting:
             break
 
         if not cap.isOpened():
-            print("Stream หลุด! กำลังพยายามเชื่อมต่อใหม่...")
             cap = connect_stream()
             if not cap.isOpened():
                 cv2.waitKey(1000)
                 continue
 
         ret, frame = cap.read()
-
-        time_since_last_frame = (datetime.now() - last_frame_time).total_seconds()
+        time_since_last = (datetime.now() - last_frame_time).total_seconds()
         is_stalled = (not ret and not str(source).isdigit()) or \
-                     (time_since_last_frame > 5.0 and not str(source).isdigit())
+                     (time_since_last > 5.0 and not str(source).isdigit())
 
         if is_stalled or manual_reload:
-            if manual_reload:
-                print("ผู้ใช้กดปุ่ม Reload! กำลังโหลด Stream ใหม่...")
-                manual_reload = False
-            else:
-                print("สตรีมมิ่งค้าง... กำลังโหลดใหม่ (Auto-Reload)")
-
+            manual_reload = False
             cap = connect_stream()
             last_frame_time = datetime.now()
             continue
 
         if not ret:
-            if str(source).isdigit() or source.endswith('.mp4') or source.endswith('.avi'):
+            if str(source).isdigit() or source.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
                 print("สิ้นสุดไฟล์วิดีโอ")
                 break
             continue
@@ -289,12 +272,14 @@ def run_counter(source, export_csv, fast_mode):
         results = model.track(frame, persist=True, classes=vehicle_classes,
                                imgsz=tracking_imgsz, verbose=False)
 
-        # วาดเส้นนับ (gradient look)
-        cv2.line(frame, line_start, line_end, (0, 220, 255), 2, cv2.LINE_AA)
-        cv2.circle(frame, line_start, 5, (255, 255, 255), -1)
-        cv2.circle(frame, line_end,   5, (255, 255, 255), -1)
-        cv2.putText(frame, "COUNTING LINE", (line_start[0] + 6, line_start[1] - 10),
-                    FONT, 0.4, (0, 220, 255), 1, cv2.LINE_AA)
+        # วาดเส้นทุกเส้นบน frame
+        for li, (ls, le) in enumerate(lines):
+            lc = LINE_COLORS[li]
+            cv2.line(frame, ls, le, lc, 2, cv2.LINE_AA)
+            cv2.circle(frame, ls, 5, (255, 255, 255), -1)
+            cv2.circle(frame, le, 5, (255, 255, 255), -1)
+            cv2.putText(frame, line_labels[li], (ls[0] + 6, ls[1] - 8),
+                        FONT, 0.4, lc, 1, cv2.LINE_AA)
 
         if results[0].boxes.id is not None:
             boxes     = results[0].boxes.xyxy.cpu()
@@ -303,8 +288,7 @@ def run_counter(source, export_csv, fast_mode):
 
             for box, track_id, class_id in zip(boxes, track_ids, class_ids):
                 x1, y1, x2, y2 = map(int, box)
-                cx = (x1 + x2) // 2
-                cy = (y1 + y2) // 2
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
 
                 track_history[track_id].append((cx, cy))
                 if len(track_history[track_id]) > 30:
@@ -313,132 +297,121 @@ def run_counter(source, export_csv, fast_mode):
                 cls_name = class_names[class_id]
                 label = f"{cls_name}  #{track_id}"
 
-                # Bounding box
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 220, 255), 1)
-
-                # Label background
                 (lw, lh), _ = cv2.getTextSize(label, FONT, 0.4, 1)
                 cv2.rectangle(frame, (x1, y1 - lh - 8), (x1 + lw + 6, y1), (0, 220, 255), -1)
                 cv2.putText(frame, label, (x1 + 3, y1 - 4),
                             FONT, 0.4, (10, 10, 10), 1, cv2.LINE_AA)
 
-                # Trajectory trail (fade effect)
                 hist = track_history[track_id]
                 for i in range(1, len(hist)):
                     alpha = int(255 * i / len(hist))
-                    color = (alpha // 2, alpha, 200)
-                    cv2.line(frame, hist[i - 1], hist[i], color, 1, cv2.LINE_AA)
-
+                    cv2.line(frame, hist[i-1], hist[i], (alpha // 2, alpha, 200), 1, cv2.LINE_AA)
                 cv2.circle(frame, (cx, cy), 4, (255, 255, 255), -1)
 
-                if len(track_history[track_id]) >= 2:
-                    prev_pt = track_history[track_id][-2]
-                    curr_pt = track_history[track_id][-1]
-
-                    if track_id not in counted_ids:
-                        if intersect(line_start, line_end, prev_pt, curr_pt):
-                            counted_ids.add(track_id)
-                            is_inbound = ccw(line_start, line_end, curr_pt)
-                            direction = "Inbound" if is_inbound else "Outbound"
-
-                            if is_inbound:
-                                counts["inbound"][cls_name] += 1
-                            else:
-                                counts["outbound"][cls_name] += 1
-
-                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            export_data.append([timestamp, track_id, cls_name, direction])
+                if len(hist) >= 2:
+                    prev_pt = hist[-2]
+                    curr_pt = hist[-1]
+                    # ตรวจแต่ละเส้น
+                    for li, (ls, le) in enumerate(lines):
+                        if track_id not in counted_ids_per_line[li]:
+                            if intersect(ls, le, prev_pt, curr_pt):
+                                counted_ids_per_line[li].add(track_id)
+                                is_inbound = ccw(ls, le, curr_pt)
+                                direction = "Inbound" if is_inbound else "Outbound"
+                                if is_inbound:
+                                    counts_per_line[li]["inbound"][cls_name] += 1
+                                else:
+                                    counts_per_line[li]["outbound"][cls_name] += 1
+                                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                export_data_per_line[li].append(
+                                    [ts, track_id, cls_name, direction])
 
         # ====================
-        # วาด Dashboard ใหม่
+        # วาด Dashboard
         # ====================
         dashboard = np.zeros((dash_h, dash_w, 3), dtype=np.uint8)
         dashboard[:] = BG_COLOR
 
-        # --- Header ---
+        # Header
         cv2.rectangle(dashboard, (0, 0), (dash_w, 58), HEADER_COLOR, -1)
-        draw_text_centered(dashboard, "VEHICLE COUNTER", dash_w // 2, 24,
-                           FONT, 0.65, ACCENT, 2)
-        now_str = datetime.now().strftime("%H:%M:%S")
-        draw_text_centered(dashboard, now_str, dash_w // 2, 46,
-                           FONT, 0.42, MUTED_COLOR, 1)
+        draw_text_centered(dashboard, "VEHICLE COUNTER", dash_w // 2, 24, FONT, 0.65, ACCENT, 2)
+        draw_text_centered(dashboard, datetime.now().strftime("%H:%M:%S"),
+                           dash_w // 2, 46, FONT, 0.42, MUTED_COLOR, 1)
 
-        # --- ยอดนับรวม ---
-        total_in  = sum(counts["inbound"].values())
-        total_out = sum(counts["outbound"].values())
-        total_all = total_in + total_out
+        # Grand total
+        grand_total = sum(
+            sum(c["inbound"].values()) + sum(c["outbound"].values())
+            for c in counts_per_line
+        )
+        cv2.rectangle(dashboard, (15, 65), (dash_w - 15, 105), DIVIDER_COLOR, -1)
+        draw_text_centered(dashboard, f"TOTAL  {grand_total}", dash_w // 2, 92,
+                           FONT, 0.72, (255, 255, 255), 2)
 
-        # Total box
-        cv2.rectangle(dashboard, (15, 68), (dash_w - 15, 108), DIVIDER_COLOR, -1)
-        draw_text_centered(dashboard, f"TOTAL  {total_all}", dash_w // 2, 95,
-                           FONT, 0.75, (255, 255, 255), 2)
+        cv2.line(dashboard, (15, 113), (dash_w - 15, 113), DIVIDER_COLOR, 1)
 
-        # Divider
-        cv2.line(dashboard, (15, 116), (dash_w - 15, 116), DIVIDER_COLOR, 1)
+        y = 122
+        for li in range(num_lines):
+            lc = LINE_COLORS[li]
+            lbl = line_labels[li]
+            cnt = counts_per_line[li]
+            total_in  = sum(cnt["inbound"].values())
+            total_out = sum(cnt["outbound"].values())
+            line_total = total_in + total_out
 
-        # --- INBOUND section ---
-        y = 138
-        cv2.rectangle(dashboard, (15, y - 16), (130, y + 6), (0, 120, 60), -1)
-        cv2.putText(dashboard, "  INBOUND", (15, y),
-                    FONT, 0.5, INBOUND_COLOR, 1, cv2.LINE_AA)
+            # Line section header
+            cv2.rectangle(dashboard, (14, y), (dash_w - 14, y + 20), (28, 28, 45), -1)
+            cv2.rectangle(dashboard, (14, y), (14 + 4, y + 20), lc, -1)  # color bar
+            cv2.putText(dashboard, f"  {lbl}", (20, y + 15),
+                        FONT, 0.5, lc, 1, cv2.LINE_AA)
+            total_str = f"= {line_total}"
+            (tw, _), _ = cv2.getTextSize(total_str, FONT, 0.5, 2)
+            cv2.putText(dashboard, total_str, (dash_w - 20 - tw, y + 15),
+                        FONT, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
+            y += 24
 
-        total_in_str = f"{total_in}"
-        (tw, _), _ = cv2.getTextSize(total_in_str, FONT, 0.6, 2)
-        cv2.putText(dashboard, total_in_str, (dash_w - 25 - tw, y),
-                    FONT, 0.6, INBOUND_COLOR, 2, cv2.LINE_AA)
+            # Inbound row
+            cv2.putText(dashboard, "  IN", (22, y + 12), FONT, 0.4, INBOUND_COLOR, 1, cv2.LINE_AA)
+            xb = 60
+            for cls_nm, count in cnt["inbound"].items():
+                tag = f"{cls_nm}:{count}"
+                (tw2, _), _ = cv2.getTextSize(tag, FONT, 0.38, 1)
+                cv2.rectangle(dashboard, (xb, y + 1), (xb + tw2 + 8, y + 15), (0, 80, 40), -1)
+                cv2.putText(dashboard, tag, (xb + 4, y + 12),
+                            FONT, 0.38, INBOUND_COLOR, 1, cv2.LINE_AA)
+                xb += tw2 + 12
+            y += 20
 
-        y += 14
-        for cls_name, count in counts["inbound"].items():
-            y += 26
-            icon_name = cls_name.lower()
-            cv2.putText(dashboard, f"   {cls_name}", (25, y),
-                        FONT, 0.48, TEXT_COLOR, 1, cv2.LINE_AA)
-            bar_filled = min(int((count / max(total_in, 1)) * 120), 120)
-            cv2.rectangle(dashboard, (150, y - 10), (150 + 120, y - 2), DIVIDER_COLOR, -1)
-            cv2.rectangle(dashboard, (150, y - 10), (150 + bar_filled, y - 2), INBOUND_COLOR, -1)
-            cv2.putText(dashboard, str(count), (280, y),
-                        FONT, 0.48, INBOUND_COLOR, 1, cv2.LINE_AA)
+            # Outbound row
+            cv2.putText(dashboard, "  OUT", (22, y + 12), FONT, 0.4, OUTBOUND_COLOR, 1, cv2.LINE_AA)
+            xb = 66
+            for cls_nm, count in cnt["outbound"].items():
+                tag = f"{cls_nm}:{count}"
+                (tw2, _), _ = cv2.getTextSize(tag, FONT, 0.38, 1)
+                cv2.rectangle(dashboard, (xb, y + 1), (xb + tw2 + 8, y + 15), (30, 20, 90), -1)
+                cv2.putText(dashboard, tag, (xb + 4, y + 12),
+                            FONT, 0.38, OUTBOUND_COLOR, 1, cv2.LINE_AA)
+                xb += tw2 + 12
+            y += 22
 
-        y += 20
-        cv2.line(dashboard, (15, y), (dash_w - 15, y), DIVIDER_COLOR, 1)
-        y += 18
+            # Divider between lines
+            if li < num_lines - 1:
+                cv2.line(dashboard, (20, y), (dash_w - 20, y), DIVIDER_COLOR, 1)
+                y += 8
 
-        # --- OUTBOUND section ---
-        cv2.rectangle(dashboard, (15, y - 16), (140, y + 6), (50, 30, 130), -1)
-        cv2.putText(dashboard, "  OUTBOUND", (15, y),
-                    FONT, 0.5, OUTBOUND_COLOR, 1, cv2.LINE_AA)
-
-        total_out_str = f"{total_out}"
-        (tw, _), _ = cv2.getTextSize(total_out_str, FONT, 0.6, 2)
-        cv2.putText(dashboard, total_out_str, (dash_w - 25 - tw, y),
-                    FONT, 0.6, OUTBOUND_COLOR, 2, cv2.LINE_AA)
-
-        y += 14
-        for cls_name, count in counts["outbound"].items():
-            y += 26
-            cv2.putText(dashboard, f"   {cls_name}", (25, y),
-                        FONT, 0.48, TEXT_COLOR, 1, cv2.LINE_AA)
-            bar_filled = min(int((count / max(total_out, 1)) * 120), 120)
-            cv2.rectangle(dashboard, (150, y - 10), (150 + 120, y - 2), DIVIDER_COLOR, -1)
-            cv2.rectangle(dashboard, (150, y - 10), (150 + bar_filled, y - 2), OUTBOUND_COLOR, -1)
-            cv2.putText(dashboard, str(count), (280, y),
-                        FONT, 0.48, OUTBOUND_COLOR, 1, cv2.LINE_AA)
-
-        # --- ปุ่ม RELOAD ---
+        # Buttons
         draw_rounded_rect(dashboard, (rld_x1, rld_y1), (rld_x2, rld_y2), BTN_RELOAD, radius=10)
-        draw_text_centered(dashboard, "RELOAD STREAM", (rld_x1 + rld_x2) // 2, rld_y1 + 20,
-                           FONT, 0.5, (255, 255, 255), 2)
-        draw_text_centered(dashboard, "(or press  R)", (rld_x1 + rld_x2) // 2, rld_y1 + 36,
-                           FONT, 0.35, (180, 220, 230), 1)
+        draw_text_centered(dashboard, "RELOAD STREAM",
+                           (rld_x1 + rld_x2) // 2, rld_y1 + 20, FONT, 0.5, (255, 255, 255), 2)
+        draw_text_centered(dashboard, "(or press  R)",
+                           (rld_x1 + rld_x2) // 2, rld_y1 + 36, FONT, 0.35, (180, 220, 230))
 
-        # --- ปุ่ม STOP & EXPORT ---
         draw_rounded_rect(dashboard, (btn_x1, btn_y1), (btn_x2, btn_y2), BTN_STOP, radius=10)
-        draw_text_centered(dashboard, "STOP & EXPORT", (btn_x1 + btn_x2) // 2, btn_y1 + 20,
-                           FONT, 0.5, (255, 255, 255), 2)
-        draw_text_centered(dashboard, "(or press  Q)", (btn_x1 + btn_x2) // 2, btn_y1 + 36,
-                           FONT, 0.35, (180, 200, 255), 1)
+        draw_text_centered(dashboard, "STOP & EXPORT",
+                           (btn_x1 + btn_x2) // 2, btn_y1 + 20, FONT, 0.5, (255, 255, 255), 2)
+        draw_text_centered(dashboard, "(or press  Q)",
+                           (btn_x1 + btn_x2) // 2, btn_y1 + 36, FONT, 0.35, (180, 200, 255))
 
-        # --- Fast Mode indicator ---
         mode_label = "FAST MODE" if fast_mode else "QUALITY MODE"
         mode_color = (0, 200, 100) if fast_mode else (200, 140, 0)
         cv2.circle(dashboard, (22, dash_h - 12), 5, mode_color, -1)
@@ -447,12 +420,13 @@ def run_counter(source, export_csv, fast_mode):
 
         cv2.imshow("Dashboard", dashboard)
 
-        # Vehicle Counting frame — เพิ่ม overlay ข้อมูลมุมซ้ายบน
-        overlay_h = 30
+        # Overlay บน frame
+        grand_in  = sum(sum(c["inbound"].values())  for c in counts_per_line)
+        grand_out = sum(sum(c["outbound"].values()) for c in counts_per_line)
         ov = frame.copy()
-        cv2.rectangle(ov, (0, 0), (180, overlay_h), (10, 10, 20), -1)
+        cv2.rectangle(ov, (0, 0), (210, 28), (10, 10, 20), -1)
         cv2.addWeighted(ov, 0.65, frame, 0.35, 0, frame)
-        cv2.putText(frame, f"IN:{total_in}  OUT:{total_out}  TOT:{total_all}",
+        cv2.putText(frame, f"IN:{grand_in}  OUT:{grand_out}  TOT:{grand_total}",
                     (8, 20), FONT, 0.45, (0, 220, 255), 1, cv2.LINE_AA)
 
         cv2.imshow("Vehicle Counting", frame)
@@ -468,58 +442,133 @@ def run_counter(source, export_csv, fast_mode):
         cap.release()
     cv2.destroyAllWindows()
 
-    if export_data and export_csv:
-        try:
-            with open(export_csv, mode='w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                writer.writerow(["Timestamp", "Vehicle_ID", "Class", "Direction"])
-                writer.writerows(export_data)
-            print(f"✅ บันทึกประวัติการนับลงไฟล์ CSV: {export_csv} แล้ว!")
-            messagebox.showinfo("Success", f"นับเสร็จสิ้น! ข้อมูลบันทึกที่:\n{export_csv}")
-        except Exception as e:
-            print(f"❌ เกิดข้อผิดพลาดในการบันทึกไฟล์ CSV: {e}")
-            messagebox.showerror("Error", f"บันทึกไฟล์ CSV ไม่ได้:\n{e}")
+    # ==========================================
+    # ส่วนที่ 3: Export ผลลัพธ์
+    # ==========================================
+    # ส่วนที่ 3: Export ผลลัพธ์ (Excel เสมอ — Summary + Detail sheet)
+    # ==========================================
+    any_data = any(len(d) > 0 for d in export_data_per_line)
+
+    if not any_data:
+        messagebox.showinfo("Done", "นับเสร็จสิ้น — ไม่มีข้อมูลยานพาหนะที่บันทึก")
+        return
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError:
+        messagebox.showerror("Error",
+            "ต้องติดตั้ง openpyxl ก่อน:\n  pip install openpyxl")
+        return
+
+    try:
+        wb = openpyxl.Workbook()
+
+        hdr_font  = Font(bold=True, color="FFFFFF", size=11)
+        hdr_fill  = PatternFill("solid", fgColor="1C1C2E")
+        line_fills = ["003040", "003A1A", "3A2000"]
+
+        # --- Sheet: Summary ---
+        ws_sum = wb.active
+        ws_sum.title = "Summary"
+        ws_sum.append(["Line", "Label", "Direction", "Class", "Count"])
+        for cell in ws_sum[1]:
+            cell.font = hdr_font
+            cell.fill = hdr_fill
+            cell.alignment = Alignment(horizontal="center")
+
+        for li in range(num_lines):
+            lbl = line_labels[li]
+            cnt = counts_per_line[li]
+            for cls_nm, count in cnt["inbound"].items():
+                ws_sum.append([f"Line {li+1}", lbl, "Inbound", cls_nm, count])
+            for cls_nm, count in cnt["outbound"].items():
+                ws_sum.append([f"Line {li+1}", lbl, "Outbound", cls_nm, count])
+
+        ws_sum.column_dimensions["A"].width = 10
+        ws_sum.column_dimensions["B"].width = 18
+        ws_sum.column_dimensions["C"].width = 12
+        ws_sum.column_dimensions["D"].width = 14
+        ws_sum.column_dimensions["E"].width = 10
+
+        # --- Sheet ต่อเส้น ---
+        for li in range(num_lines):
+            lbl = line_labels[li]
+            sheet_name = f"Line{li+1}_{lbl}"[:31]
+            ws = wb.create_sheet(title=sheet_name)
+
+            ws.append(["Timestamp", "Vehicle_ID", "Class", "Direction"])
+            fill_color = line_fills[li % len(line_fills)]
+            for cell in ws[1]:
+                cell.font = hdr_font
+                cell.fill = PatternFill("solid", fgColor=fill_color)
+                cell.alignment = Alignment(horizontal="center")
+
+            for row in export_data_per_line[li]:
+                ws.append(row)
+
+            ws.column_dimensions["A"].width = 22
+            ws.column_dimensions["B"].width = 12
+            ws.column_dimensions["C"].width = 14
+            ws.column_dimensions["D"].width = 12
+
+        wb.save(export_path)
+        print(f"✅ บันทึก Excel: {export_path}")
+        n_detail = num_lines
+        messagebox.showinfo("Success",
+            f"นับเสร็จสิ้น!\nข้อมูลบันทึกที่:\n{export_path}\n"
+            f"(Summary + {n_detail} detail sheet{'s' if n_detail > 1 else ''})"
+        )
+    except Exception as e:
+        print(f"❌ บันทึก Excel ไม่ได้: {e}")
+        messagebox.showerror("Error", f"บันทึกไฟล์ Excel ไม่ได้:\n{e}")
 
 
 # ==========================================
-# ส่วนที่ 3: Tkinter GUI — Dark Theme อัปเกรด
+# GUI หน้าหลัก (Tkinter) — Dark Theme
 # ==========================================
 def open_gui():
-    # --- สี Palette ---
-    BG         = "#12121e"
-    PANEL      = "#1c1c2e"
-    BORDER     = "#2e2e4a"
-    ACCENT     = "#00c8ff"
-    BTN_GREEN  = "#1db954"
-    BTN_HOVER  = "#17a046"
-    TEXT       = "#e0e0ee"
-    MUTED      = "#7070a0"
-    ENTRY_BG   = "#1a1a2e"
-    ENTRY_FG   = "#e0e0ee"
+    BG        = "#12121e"
+    PANEL     = "#1c1c2e"
+    BORDER    = "#2e2e4a"
+    ACCENT    = "#00c8ff"
+    BTN_GREEN = "#1db954"
+    BTN_HOVER = "#17a046"
+    TEXT      = "#e0e0ee"
+    MUTED     = "#7070a0"
+    ENTRY_BG  = "#1a1a2e"
+    ENTRY_FG  = "#e0e0ee"
+
+    FONT_TITLE = ("Segoe UI", 18, "bold")
+    FONT_HEAD  = ("Segoe UI", 10, "bold")
+    FONT_BODY  = ("Segoe UI", 9)
+    FONT_SMALL = ("Segoe UI", 8)
+    FONT_BTN   = ("Segoe UI", 11, "bold")
+
+    DEFAULT_LINE_NAMES = ["Line 1", "Line 2", "Line 3"]
 
     root = tk.Tk()
     root.title("Vehicle Counter  —  YOLOv8")
-    root.geometry("600x400")
+    root.geometry("620x520")
     root.resizable(False, False)
     root.configure(bg=BG)
 
-    # ============== FONTS ================
-    FONT_TITLE  = ("Segoe UI", 18, "bold")
-    FONT_HEAD   = ("Segoe UI", 10, "bold")
-    FONT_BODY   = ("Segoe UI", 9)
-    FONT_SMALL  = ("Segoe UI", 8)
-    FONT_BTN    = ("Segoe UI", 11, "bold")
+    source_type    = tk.IntVar(value=1)
+    file_path_var  = tk.StringVar()
+    stream_url_var = tk.StringVar(value="")
+    export_var     = tk.StringVar(value="vehicle_counts.xlsx")
+    fast_mode_var  = tk.BooleanVar(value=True)
+    num_lines_var  = tk.IntVar(value=1)
 
-    # ============== STYLE ================
-    style = ttk.Style(root)
-    style.theme_use("clam")
+    # ชื่อเส้นแต่ละเส้น
+    line_name_vars = [tk.StringVar(value=DEFAULT_LINE_NAMES[i]) for i in range(3)]
 
-    # ตัวแปรเก็บค่าตัวเลือก
-    source_type   = tk.IntVar(value=1)
-    file_path_var = tk.StringVar()
-    stream_url_var= tk.StringVar(value="")
-    csv_path_var  = tk.StringVar(value="vehicle_counts.csv")
-    fast_mode_var = tk.BooleanVar(value=True)
+    def make_entry(parent, textvar, width=40, **kw):
+        e = tk.Entry(parent, textvariable=textvar, bg=ENTRY_BG, fg=ENTRY_FG,
+                     insertbackground=ACCENT, relief="flat", font=FONT_BODY, width=width,
+                     highlightthickness=1, highlightbackground=BORDER,
+                     highlightcolor=ACCENT, **kw)
+        return e
 
     def browse_file():
         path = filedialog.askopenfilename(
@@ -529,9 +578,16 @@ def open_gui():
         if path:
             file_path_var.set(path)
 
-    def start_processing():
-        export_csv = csv_path_var.get().strip() or "vehicle_counts.csv"
+    def on_num_lines_change(*_):
+        n = num_lines_var.get()
+        # แสดง/ซ่อน label fields ตามจำนวนเส้น
+        for i in range(3):
+            if i < n:
+                line_name_frames[i].grid()
+            else:
+                line_name_frames[i].grid_remove()
 
+    def start_processing():
         if source_type.get() == 1:
             source = file_path_var.get().strip()
             if not source:
@@ -544,38 +600,37 @@ def open_gui():
                 messagebox.showwarning("Warning", "กรุณากรอก Streaming URL หรือ Camera ID (เช่น 0)")
                 return
 
+        n = num_lines_var.get()
+        labels = [line_name_vars[i].get().strip() or DEFAULT_LINE_NAMES[i] for i in range(n)]
+        export_path = export_var.get().strip()
+        if not export_path:
+            export_path = "vehicle_counts.csv" if n == 1 else "vehicle_counts.xlsx"
+
         fast_mode = fast_mode_var.get()
         root.destroy()
-        run_counter(source, export_csv, fast_mode)
+        run_counter(source, export_path, fast_mode, n, labels)
 
-    def on_enter_btn(e):
-        start_btn.configure(bg=BTN_HOVER)
-
-    def on_leave_btn(e):
-        start_btn.configure(bg=BTN_GREEN)
+    def on_enter_btn(e): start_btn.configure(bg=BTN_HOVER)
+    def on_leave_btn(e): start_btn.configure(bg=BTN_GREEN)
 
     # ======== HEADER =========
     header = tk.Frame(root, bg=PANEL, height=64)
     header.pack(fill="x")
     header.pack_propagate(False)
-
     tk.Label(header, text="🚗  VEHICLE COUNTER", font=FONT_TITLE,
              bg=PANEL, fg=ACCENT).pack(side="left", padx=22, pady=14)
     tk.Label(header, text="YOLOv8  •  Real-time", font=FONT_SMALL,
              bg=PANEL, fg=MUTED).pack(side="right", padx=22, pady=22)
-
-    # เส้นคั่น accent
     tk.Frame(root, bg=ACCENT, height=2).pack(fill="x")
 
-    # ======== MAIN CONTENT =========
+    # ======== CONTENT =========
     content = tk.Frame(root, bg=BG)
-    content.pack(fill="both", expand=True, padx=24, pady=12)
+    content.pack(fill="both", expand=True, padx=24, pady=10)
 
-    # --- Source Selection ---
+    # VIDEO SOURCE
     tk.Label(content, text="VIDEO SOURCE", font=FONT_HEAD,
              bg=BG, fg=ACCENT).grid(row=0, column=0, sticky="w", pady=(4, 6))
 
-    # Radio — Video File
     tk.Radiobutton(content, text="อัปโหลดไฟล์วิดีโอ  (Video File)",
                    variable=source_type, value=1,
                    bg=BG, fg=TEXT, selectcolor=PANEL,
@@ -584,21 +639,11 @@ def open_gui():
 
     file_frame = tk.Frame(content, bg=BG)
     file_frame.grid(row=2, column=0, sticky="ew", pady=(2, 8), padx=(16, 0))
+    make_entry(file_frame, file_path_var, width=40).pack(side="left", ipady=5, padx=(0, 6))
+    tk.Button(file_frame, text="Browse…", command=browse_file,
+              bg=PANEL, fg=ACCENT, activebackground=BORDER, activeforeground=ACCENT,
+              relief="flat", font=FONT_BODY, cursor="hand2", padx=10, pady=4).pack(side="left")
 
-    file_entry = tk.Entry(file_frame, textvariable=file_path_var,
-                          bg=ENTRY_BG, fg=ENTRY_FG, insertbackground=ACCENT,
-                          relief="flat", font=FONT_BODY, width=40,
-                          highlightthickness=1, highlightbackground=BORDER,
-                          highlightcolor=ACCENT)
-    file_entry.pack(side="left", ipady=5, padx=(0, 6))
-
-    browse_btn = tk.Button(file_frame, text="Browse…", command=browse_file,
-                           bg=PANEL, fg=ACCENT, activebackground=BORDER,
-                           activeforeground=ACCENT, relief="flat", font=FONT_BODY,
-                           cursor="hand2", padx=10, pady=4)
-    browse_btn.pack(side="left")
-
-    # Radio — Stream / Camera
     tk.Radiobutton(content, text="ลิงก์สตรีม / กล้องวงจรปิด  (Streaming URL / Camera ID)",
                    variable=source_type, value=2,
                    bg=BG, fg=TEXT, selectcolor=PANEL,
@@ -606,49 +651,74 @@ def open_gui():
                    font=FONT_BODY).grid(row=3, column=0, sticky="w", pady=(4, 0))
 
     stream_frame = tk.Frame(content, bg=BG)
-    stream_frame.grid(row=4, column=0, sticky="ew", pady=(2, 12), padx=(16, 0))
-
-    stream_entry = tk.Entry(stream_frame, textvariable=stream_url_var,
-                            bg=ENTRY_BG, fg=ENTRY_FG, insertbackground=ACCENT,
-                            relief="flat", font=FONT_BODY, width=50,
-                            highlightthickness=1, highlightbackground=BORDER,
-                            highlightcolor=ACCENT)
-    stream_entry.pack(side="left", ipady=5)
+    stream_frame.grid(row=4, column=0, sticky="ew", pady=(2, 8), padx=(16, 0))
+    make_entry(stream_frame, stream_url_var, width=50).pack(side="left", ipady=5)
 
     # เส้นคั่น
-    tk.Frame(content, bg=BORDER, height=1).grid(row=5, column=0, sticky="ew", pady=4)
+    tk.Frame(content, bg=BORDER, height=1).grid(row=5, column=0, sticky="ew", pady=2)
 
-    # --- Settings Row ---
-    settings_frame = tk.Frame(content, bg=BG)
-    settings_frame.grid(row=6, column=0, sticky="ew", pady=6)
+    # COUNTING LINES SECTION
+    lines_row = tk.Frame(content, bg=BG)
+    lines_row.grid(row=6, column=0, sticky="ew", pady=(8, 4))
 
-    # Fast Mode Toggle
-    fast_chk = tk.Checkbutton(settings_frame,
-                               text="⚡  Fast Mode  (ความเร็วสูงสุด — ลดติ๊กเพื่อเพิ่มความชัด)",
-                               variable=fast_mode_var,
-                               bg=BG, fg=TEXT, selectcolor=PANEL,
-                               activebackground=BG, activeforeground=ACCENT,
-                               font=FONT_BODY)
-    fast_chk.pack(side="left")
+    tk.Label(lines_row, text="COUNTING LINES", font=FONT_HEAD,
+             bg=BG, fg=ACCENT).pack(side="left", padx=(0, 16))
 
-    # CSV Row
+    tk.Label(lines_row, text="จำนวนเส้นนับ:", font=FONT_BODY,
+             bg=BG, fg=MUTED).pack(side="left")
+
+    num_lines_menu = tk.OptionMenu(lines_row, num_lines_var, 1, 2, 3,
+                                   command=lambda _: on_num_lines_change())
+    num_lines_menu.config(bg=PANEL, fg=TEXT, activebackground=BORDER,
+                          activeforeground=ACCENT, relief="flat",
+                          highlightthickness=0, font=FONT_BODY)
+    num_lines_menu["menu"].config(bg=PANEL, fg=TEXT, activebackground=BORDER,
+                                  activeforeground=ACCENT)
+    num_lines_menu.pack(side="left", padx=8)
+
+    # Label fields สำหรับแต่ละเส้น
+    line_name_frames = []
+    LCOLORS = LINE_LABEL_COLORS_HEX
+    for i in range(3):
+        frm = tk.Frame(content, bg=BG)
+        frm.grid(row=7 + i, column=0, sticky="ew", padx=(16, 0), pady=2)
+        line_name_frames.append(frm)
+
+        dot_canvas = tk.Canvas(frm, width=12, height=12, bg=BG, highlightthickness=0)
+        dot_canvas.create_oval(1, 1, 11, 11, fill=LCOLORS[i], outline="")
+        dot_canvas.pack(side="left", padx=(0, 6))
+
+        tk.Label(frm, text=f"Line {i+1}:", font=FONT_BODY,
+                 bg=BG, fg=TEXT).pack(side="left", padx=(0, 6))
+        make_entry(frm, line_name_vars[i], width=20).pack(side="left", ipady=4)
+
+        if i > 0:
+            frm.grid_remove()
+
+    # เส้นคั่น
+    tk.Frame(content, bg=BORDER, height=1).grid(row=10, column=0, sticky="ew", pady=(6, 2))
+
+    # Settings row
+    settings_f = tk.Frame(content, bg=BG)
+    settings_f.grid(row=11, column=0, sticky="ew", pady=4)
+    tk.Checkbutton(settings_f,
+                   text="⚡  Fast Mode  (ความเร็วสูงสุด — ลดติ๊กเพื่อเพิ่มความชัด)",
+                   variable=fast_mode_var,
+                   bg=BG, fg=TEXT, selectcolor=PANEL,
+                   activebackground=BG, activeforeground=ACCENT,
+                   font=FONT_BODY).pack(side="left")
+
+    # Export row
     csv_row = tk.Frame(content, bg=BG)
-    csv_row.grid(row=7, column=0, sticky="ew", pady=(6, 0))
-
-    tk.Label(csv_row, text="📄  Export CSV:", font=FONT_BODY,
-             bg=BG, fg=MUTED).pack(side="left", padx=(0, 8))
-
-    csv_entry = tk.Entry(csv_row, textvariable=csv_path_var,
-                         bg=ENTRY_BG, fg=ENTRY_FG, insertbackground=ACCENT,
-                         relief="flat", font=FONT_BODY, width=28,
-                         highlightthickness=1, highlightbackground=BORDER,
-                         highlightcolor=ACCENT)
-    csv_entry.pack(side="left", ipady=4)
+    csv_row.grid(row=12, column=0, sticky="ew", pady=(6, 0))
+    export_label = tk.Label(csv_row, text="📊  Export Excel:", font=FONT_BODY,
+                             bg=BG, fg=MUTED)
+    export_label.pack(side="left", padx=(0, 8))
+    make_entry(csv_row, export_var, width=28).pack(side="left", ipady=4)
 
     # ======== START BUTTON =========
     btn_frame = tk.Frame(root, bg=BG)
-    btn_frame.pack(fill="x", padx=24, pady=(4, 18))
-
+    btn_frame.pack(fill="x", padx=24, pady=(6, 16))
     start_btn = tk.Button(btn_frame, text="🚀  เริ่มนับยานพาหนะ  (Start)",
                           font=FONT_BTN, bg=BTN_GREEN, fg="white",
                           activebackground=BTN_HOVER, activeforeground="white",
