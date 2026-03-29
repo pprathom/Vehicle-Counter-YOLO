@@ -534,26 +534,30 @@ def run_counter(source, export_path, fast_mode, num_lines, line_labels, model_si
 def open_gui():
     BG        = "#12121e"
     PANEL     = "#1c1c2e"
+    CARD      = "#1e1e32"
     BORDER    = "#2e2e4a"
     ACCENT    = "#00c8ff"
+    ACCENT2   = "#7b5ea7"
     BTN_GREEN = "#1db954"
     BTN_HOVER = "#17a046"
     TEXT      = "#e0e0ee"
     MUTED     = "#7070a0"
-    ENTRY_BG  = "#1a1a2e"
+    ENTRY_BG  = "#161628"
     ENTRY_FG  = "#e0e0ee"
 
-    FONT_TITLE = ("Segoe UI", 18, "bold")
-    FONT_HEAD  = ("Segoe UI", 10, "bold")
-    FONT_BODY  = ("Segoe UI", 9)
-    FONT_SMALL = ("Segoe UI", 8)
-    FONT_BTN   = ("Segoe UI", 11, "bold")
+    FONT_TITLE  = ("Segoe UI", 16, "bold")
+    FONT_SUBTITLE = ("Segoe UI", 8)
+    FONT_HEAD   = ("Segoe UI", 9, "bold")
+    FONT_BODY   = ("Segoe UI", 9)
+    FONT_SMALL  = ("Segoe UI", 8)
+    FONT_BTN    = ("Segoe UI", 11, "bold")
+    FONT_LABEL  = ("Segoe UI", 8, "bold")
 
     DEFAULT_LINE_NAMES = ["Line 1", "Line 2", "Line 3"]
 
     root = tk.Tk()
     root.title("Vehicle Counter  —  YOLOv8")
-    root.geometry("620x520")
+    root.geometry("740x548")
     root.resizable(False, False)
     root.configure(bg=BG)
 
@@ -563,20 +567,29 @@ def open_gui():
     export_var     = tk.StringVar(value="vehicle_counts.xlsx")
     fast_mode_var  = tk.BooleanVar(value=True)
     num_lines_var  = tk.IntVar(value=1)
-    
-    # Advanced Settings
-    model_size_var = tk.StringVar(value="yolov8n.pt")
+    model_size_var  = tk.StringVar(value="yolov8n.pt")
     sensitivity_var = tk.StringVar(value="Normal (0.25)")
+    line_name_vars  = [tk.StringVar(value=DEFAULT_LINE_NAMES[i]) for i in range(3)]
 
-    # ชื่อเส้นแต่ละเส้น
-    line_name_vars = [tk.StringVar(value=DEFAULT_LINE_NAMES[i]) for i in range(3)]
-
-    def make_entry(parent, textvar, width=40, **kw):
+    def make_entry(parent, textvar, width=28, **kw):
         e = tk.Entry(parent, textvariable=textvar, bg=ENTRY_BG, fg=ENTRY_FG,
                      insertbackground=ACCENT, relief="flat", font=FONT_BODY, width=width,
                      highlightthickness=1, highlightbackground=BORDER,
                      highlightcolor=ACCENT, **kw)
         return e
+
+    def make_label(parent, text, font=None, fg=None, **kw):
+        return tk.Label(parent, text=text, font=font or FONT_BODY,
+                        bg=CARD, fg=fg or TEXT, **kw)
+
+    def card(parent, **kw):
+        """Flat card with CARD background and border."""
+        f = tk.Frame(parent, bg=CARD, highlightthickness=1, highlightbackground=BORDER, **kw)
+        return f
+
+    def section_title(parent, text):
+        tk.Label(parent, text=text, font=FONT_LABEL, bg=CARD,
+                 fg=ACCENT).pack(anchor="w", pady=(0, 6))
 
     def browse_file():
         path = filedialog.askopenfilename(
@@ -588,12 +601,11 @@ def open_gui():
 
     def on_num_lines_change(*_):
         n = num_lines_var.get()
-        # แสดง/ซ่อน label fields ตามจำนวนเส้น
         for i in range(3):
             if i < n:
-                line_name_frames[i].grid()
+                line_name_frames[i].pack(anchor="w", padx=4, pady=1)
             else:
-                line_name_frames[i].grid_remove()
+                line_name_frames[i].pack_forget()
 
     def start_processing():
         if source_type.get() == 1:
@@ -610,22 +622,17 @@ def open_gui():
 
         n = num_lines_var.get()
         labels = [line_name_vars[i].get().strip() or DEFAULT_LINE_NAMES[i] for i in range(n)]
-        export_path = export_var.get().strip()
-        if not export_path:
-            export_path = "vehicle_counts.xlsx"
-
+        export_path = export_var.get().strip() or "vehicle_counts.xlsx"
         fast_mode = fast_mode_var.get()
         model_size = model_size_var.get()
-        
-        # แปลงค่า Sensitivity เป็น Confidence Threshold
+
         sens_str = sensitivity_var.get()
         if "High" in sens_str:
-            conf_th = 0.15 # จับง่ายขึ้น (อาจเจอขยะ)
+            conf_th = 0.15
         elif "Low" in sens_str:
-            conf_th = 0.40 # จับยากขึ้น (แม่นยำสูง)
+            conf_th = 0.40
         else:
-            conf_th = 0.25 # Normal
-            
+            conf_th = 0.25
         iou_th = 0.45
 
         root.destroy()
@@ -634,149 +641,201 @@ def open_gui():
     def on_enter_btn(e): start_btn.configure(bg=BTN_HOVER)
     def on_leave_btn(e): start_btn.configure(bg=BTN_GREEN)
 
-    # ======== HEADER =========
-    header = tk.Frame(root, bg=PANEL, height=64)
+    # ──────────────────────────────────────
+    # HEADER
+    # ──────────────────────────────────────
+    header = tk.Frame(root, bg=PANEL, height=60)
     header.pack(fill="x")
     header.pack_propagate(False)
-    tk.Label(header, text="🚗  VEHICLE COUNTER", font=FONT_TITLE,
-             bg=PANEL, fg=ACCENT).pack(side="left", padx=22, pady=14)
-    tk.Label(header, text="YOLOv8  •  Real-time", font=FONT_SMALL,
-             bg=PANEL, fg=MUTED).pack(side="right", padx=22, pady=22)
+
+    hdr_left = tk.Frame(header, bg=PANEL)
+    hdr_left.pack(side="left", padx=20, pady=8)
+    tk.Label(hdr_left, text="🚗  VEHICLE COUNTER", font=FONT_TITLE,
+             bg=PANEL, fg=ACCENT).pack(anchor="w")
+    tk.Label(hdr_left, text="Real-time detection powered by YOLOv8", font=FONT_SUBTITLE,
+             bg=PANEL, fg=MUTED).pack(anchor="w")
+
+    tk.Label(header, text="v2.0", font=("Segoe UI", 8, "bold"),
+             bg=PANEL, fg=ACCENT2).pack(side="right", padx=20)
+
     tk.Frame(root, bg=ACCENT, height=2).pack(fill="x")
 
-    # ======== CONTENT =========
-    main_canvas = tk.Canvas(root, bg=BG, highlightthickness=0)
-    scrollbar = ttk.Scrollbar(root, orient="vertical", command=main_canvas.yview)
-    content = tk.Frame(main_canvas, bg=BG)
-    
-    content.bind("<Configure>", lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all")))
-    main_canvas.create_window((0, 0), window=content, anchor="nw", width=580)
-    main_canvas.configure(yscrollcommand=scrollbar.set)
-    
-    main_canvas.pack(side="left", fill="both", expand=True, padx=(24, 0), pady=10)
-    scrollbar.pack(side="right", fill="y", pady=10)
+    # ──────────────────────────────────────
+    # BODY — two-column layout
+    # ──────────────────────────────────────
+    body = tk.Frame(root, bg=BG)
+    body.pack(fill="both", expand=True, padx=14, pady=10)
 
-    # VIDEO SOURCE
-    tk.Label(content, text="VIDEO SOURCE", font=FONT_HEAD,
-             bg=BG, fg=ACCENT).grid(row=0, column=0, sticky="w", pady=(4, 6))
+    col_left  = tk.Frame(body, bg=BG)
+    col_right = tk.Frame(body, bg=BG)
+    col_left.pack(side="left", fill="both", expand=True, padx=(0, 7))
+    col_right.pack(side="left", fill="both", expand=True, padx=(7, 0))
 
-    tk.Radiobutton(content, text="อัปโหลดไฟล์วิดีโอ  (Video File)",
+    # ── LEFT: Video Source ──────────────────
+    src_card = card(col_left)
+    src_card.pack(fill="x", pady=(0, 8))
+    src_inner = tk.Frame(src_card, bg=CARD, padx=12, pady=10)
+    src_inner.pack(fill="x")
+
+    section_title(src_inner, "📂  VIDEO SOURCE")
+
+    # File upload row
+    rb_file = tk.Radiobutton(src_inner, text="Video File",
                    variable=source_type, value=1,
-                   bg=BG, fg=TEXT, selectcolor=PANEL,
-                   activebackground=BG, activeforeground=ACCENT,
-                   font=FONT_BODY).grid(row=1, column=0, sticky="w")
+                   bg=CARD, fg=TEXT, selectcolor=PANEL,
+                   activebackground=CARD, activeforeground=ACCENT,
+                   font=FONT_BODY)
+    rb_file.pack(anchor="w")
 
-    file_frame = tk.Frame(content, bg=BG)
-    file_frame.grid(row=2, column=0, sticky="ew", pady=(2, 8), padx=(16, 0))
-    make_entry(file_frame, file_path_var, width=40).pack(side="left", ipady=5, padx=(0, 6))
+    file_frame = tk.Frame(src_inner, bg=CARD)
+    file_frame.pack(fill="x", pady=(2, 6), padx=12)
+    make_entry(file_frame, file_path_var, width=26).pack(side="left", ipady=4, padx=(0, 6), fill="x", expand=True)
     tk.Button(file_frame, text="Browse…", command=browse_file,
-              bg=PANEL, fg=ACCENT, activebackground=BORDER, activeforeground=ACCENT,
-              relief="flat", font=FONT_BODY, cursor="hand2", padx=10, pady=4).pack(side="left")
+              bg=BORDER, fg=ACCENT, activebackground="#3a3a5c", activeforeground=ACCENT,
+              relief="flat", font=FONT_SMALL, cursor="hand2", padx=8, pady=4).pack(side="left")
 
-    tk.Radiobutton(content, text="ลิงก์สตรีม / กล้องวงจรปิด  (Streaming URL / Camera ID)",
+    # Stream row
+    rb_stream = tk.Radiobutton(src_inner, text="Streaming URL / Camera ID",
                    variable=source_type, value=2,
-                   bg=BG, fg=TEXT, selectcolor=PANEL,
-                   activebackground=BG, activeforeground=ACCENT,
-                   font=FONT_BODY).grid(row=3, column=0, sticky="w", pady=(4, 0))
+                   bg=CARD, fg=TEXT, selectcolor=PANEL,
+                   activebackground=CARD, activeforeground=ACCENT,
+                   font=FONT_BODY)
+    rb_stream.pack(anchor="w")
 
-    stream_frame = tk.Frame(content, bg=BG)
-    stream_frame.grid(row=4, column=0, sticky="ew", pady=(2, 8), padx=(16, 0))
-    make_entry(stream_frame, stream_url_var, width=50).pack(side="left", ipady=5)
+    stream_frame = tk.Frame(src_inner, bg=CARD)
+    stream_frame.pack(fill="x", pady=(2, 4), padx=12)
+    make_entry(stream_frame, stream_url_var, width=34).pack(side="left", ipady=4, fill="x", expand=True)
 
-    # เส้นคั่น
-    tk.Frame(content, bg=BORDER, height=1).grid(row=5, column=0, sticky="ew", pady=2)
+    # ── LEFT: Counting Lines ────────────────
+    lines_card = card(col_left)
+    lines_card.pack(fill="x", pady=(0, 8))
+    lines_inner = tk.Frame(lines_card, bg=CARD, padx=12, pady=10)
+    lines_inner.pack(fill="x")
 
-    # COUNTING LINES SECTION
-    lines_row = tk.Frame(content, bg=BG)
-    lines_row.grid(row=6, column=0, sticky="ew", pady=(8, 4))
+    section_title(lines_inner, "📏  COUNTING LINES")
 
-    tk.Label(lines_row, text="COUNTING LINES", font=FONT_HEAD,
-             bg=BG, fg=ACCENT).pack(side="left", padx=(0, 16))
-
-    tk.Label(lines_row, text="จำนวนเส้นนับ:", font=FONT_BODY,
-             bg=BG, fg=MUTED).pack(side="left")
-
-    num_lines_menu = tk.OptionMenu(lines_row, num_lines_var, 1, 2, 3,
+    lines_top = tk.Frame(lines_inner, bg=CARD)
+    lines_top.pack(fill="x", pady=(0, 6))
+    tk.Label(lines_top, text="จำนวนเส้นนับ:", font=FONT_BODY, bg=CARD, fg=MUTED).pack(side="left")
+    num_lines_menu = tk.OptionMenu(lines_top, num_lines_var, 1, 2, 3,
                                    command=lambda _: on_num_lines_change())
-    num_lines_menu.config(bg=PANEL, fg=TEXT, activebackground=BORDER,
+    num_lines_menu.config(bg=BORDER, fg=TEXT, activebackground="#3a3a5c",
                           activeforeground=ACCENT, relief="flat",
-                          highlightthickness=0, font=FONT_BODY)
+                          highlightthickness=0, font=FONT_BODY, padx=6)
     num_lines_menu["menu"].config(bg=PANEL, fg=TEXT, activebackground=BORDER,
                                   activeforeground=ACCENT)
     num_lines_menu.pack(side="left", padx=8)
 
-    # Label fields สำหรับแต่ละเส้น
-    line_name_frames = []
     LCOLORS = LINE_LABEL_COLORS_HEX
+    line_name_frames = []
     for i in range(3):
-        frm = tk.Frame(content, bg=BG)
-        frm.grid(row=7 + i, column=0, sticky="ew", padx=(16, 0), pady=2)
+        frm = tk.Frame(lines_inner, bg=CARD)
         line_name_frames.append(frm)
+        dot_c = tk.Canvas(frm, width=10, height=10, bg=CARD, highlightthickness=0)
+        dot_c.create_oval(1, 1, 9, 9, fill=LCOLORS[i], outline="")
+        dot_c.pack(side="left", padx=(0, 5))
+        tk.Label(frm, text=f"Line {i+1}:", font=FONT_BODY, bg=CARD, fg=TEXT).pack(side="left", padx=(0, 5))
+        make_entry(frm, line_name_vars[i], width=16).pack(side="left", ipady=3)
 
-        dot_canvas = tk.Canvas(frm, width=12, height=12, bg=BG, highlightthickness=0)
-        dot_canvas.create_oval(1, 1, 11, 11, fill=LCOLORS[i], outline="")
-        dot_canvas.pack(side="left", padx=(0, 6))
+    # Show only line 1 initially
+    line_name_frames[0].pack(anchor="w", padx=4, pady=1)
 
-        tk.Label(frm, text=f"Line {i+1}:", font=FONT_BODY,
-                 bg=BG, fg=TEXT).pack(side="left", padx=(0, 6))
-        make_entry(frm, line_name_vars[i], width=20).pack(side="left", ipady=4)
+    # ── LEFT: Export ────────────────────────
+    exp_card = card(col_left)
+    exp_card.pack(fill="x")
+    exp_inner = tk.Frame(exp_card, bg=CARD, padx=12, pady=10)
+    exp_inner.pack(fill="x")
 
-        if i > 0:
-            frm.grid_remove()
+    section_title(exp_inner, "📊  EXPORT")
+    exp_row = tk.Frame(exp_inner, bg=CARD)
+    exp_row.pack(fill="x")
+    tk.Label(exp_row, text="ชื่อไฟล์ Excel:", font=FONT_BODY, bg=CARD, fg=MUTED).pack(side="left", padx=(0, 8))
+    make_entry(exp_row, export_var, width=22).pack(side="left", ipady=4)
 
-    # เส้นคั่น
-    tk.Frame(content, bg=BORDER, height=1).grid(row=10, column=0, sticky="ew", pady=(6, 2))
+    # ── RIGHT: AI Settings ──────────────────
+    ai_card = card(col_right)
+    ai_card.pack(fill="x", pady=(0, 8))
+    ai_inner = tk.Frame(ai_card, bg=CARD, padx=12, pady=10)
+    ai_inner.pack(fill="x")
 
-    # ADVANCED SETTINGS
-    tk.Label(content, text="ADVANCED SETTINGS  (จูนการจับมอเตอร์ไซค์)", font=FONT_HEAD,
-             bg=BG, fg=ACCENT).grid(row=11, column=0, sticky="w", pady=(4, 6))
+    section_title(ai_inner, "🤖  AI MODEL SETTINGS")
 
-    adv_f1 = tk.Frame(content, bg=BG)
-    adv_f1.grid(row=12, column=0, sticky="ew", padx=(16, 0), pady=2)
-    tk.Label(adv_f1, text="ความแม่นยำ AI (Model):", font=FONT_BODY, bg=BG, fg=TEXT).pack(side="left")
-    
-    model_menu = tk.OptionMenu(adv_f1, model_size_var, 
-                               "yolov8n.pt", "yolov8s.pt", "yolov8m.pt")
-    model_menu.config(bg=PANEL, fg=TEXT, activebackground=BORDER, relief="flat", highlightthickness=0)
+    # Model
+    m_row = tk.Frame(ai_inner, bg=CARD)
+    m_row.pack(fill="x", pady=(0, 6))
+    tk.Label(m_row, text="Model:", font=FONT_BODY, bg=CARD, fg=MUTED, width=12, anchor="w").pack(side="left")
+    model_menu = tk.OptionMenu(m_row, model_size_var, "yolov8n.pt", "yolov8s.pt", "yolov8m.pt")
+    model_menu.config(bg=BORDER, fg=TEXT, activebackground="#3a3a5c",
+                      activeforeground=ACCENT, relief="flat", highlightthickness=0,
+                      font=FONT_BODY, padx=6)
     model_menu["menu"].config(bg=PANEL, fg=TEXT)
-    model_menu.pack(side="left", padx=8)
-    tk.Label(adv_f1, text="*(s หรือ m จะจับแม่นขึ้นมาก แต่กินเครื่อง)*", font=FONT_SMALL, bg=BG, fg=MUTED).pack(side="left")
+    model_menu.pack(side="left", padx=(0, 8))
 
-    adv_f2 = tk.Frame(content, bg=BG)
-    adv_f2.grid(row=13, column=0, sticky="ew", padx=(16, 0), pady=2)
-    tk.Label(adv_f2, text="ความไว (Sensitivity):", font=FONT_BODY, bg=BG, fg=TEXT).pack(side="left")
-    
-    sens_menu = tk.OptionMenu(adv_f2, sensitivity_var, 
-                               "High (0.15) จับง่าย", "Normal (0.25)", "Low (0.40) ชัวร์เท่านั้น")
-    sens_menu.config(bg=PANEL, fg=TEXT, activebackground=BORDER, relief="flat", highlightthickness=0)
+    # Model hint
+    tk.Label(ai_inner, text="  n = เร็ว  /  s = สมดุล  /  m = แม่นยำ (ช้า)",
+             font=FONT_SMALL, bg=CARD, fg=MUTED).pack(anchor="w", pady=(0, 8))
+
+    # Sensitivity
+    s_row = tk.Frame(ai_inner, bg=CARD)
+    s_row.pack(fill="x", pady=(0, 4))
+    tk.Label(s_row, text="Sensitivity:", font=FONT_BODY, bg=CARD, fg=MUTED, width=12, anchor="w").pack(side="left")
+    sens_menu = tk.OptionMenu(s_row, sensitivity_var,
+                              "High (0.15) จับง่าย", "Normal (0.25)", "Low (0.40) ชัวร์เท่านั้น")
+    sens_menu.config(bg=BORDER, fg=TEXT, activebackground="#3a3a5c",
+                     activeforeground=ACCENT, relief="flat", highlightthickness=0,
+                     font=FONT_BODY, padx=6)
     sens_menu["menu"].config(bg=PANEL, fg=TEXT)
-    sens_menu.pack(side="left", padx=8)
+    sens_menu.pack(side="left")
 
-    # Settings row
-    settings_f = tk.Frame(content, bg=BG)
-    settings_f.grid(row=14, column=0, sticky="ew", pady=(8, 4))
-    tk.Checkbutton(settings_f,
-                   text="⚡  Fast Mode  (ลดสเกลภาพให้เร็วขึ้น — ถ้ากดยกเลิกจะจับรถเล็กได้ดีขึ้น)",
+    tk.Label(ai_inner, text="  High = จับมอเตอร์ไซค์ได้มากขึ้น  /  Low = แม่นสูง",
+             font=FONT_SMALL, bg=CARD, fg=MUTED).pack(anchor="w")
+
+    # ── RIGHT: Performance ────────────────
+    perf_card = card(col_right)
+    perf_card.pack(fill="x", pady=(0, 8))
+    perf_inner = tk.Frame(perf_card, bg=CARD, padx=12, pady=10)
+    perf_inner.pack(fill="x")
+
+    section_title(perf_inner, "⚡  PERFORMANCE")
+
+    fast_cb = tk.Checkbutton(perf_inner,
+                   text="Fast Mode  (320px — เร็วกว่า)",
                    variable=fast_mode_var,
-                   bg=BG, fg=TEXT, selectcolor=PANEL,
-                   activebackground=BG, activeforeground=ACCENT,
-                   font=FONT_BODY).pack(side="left")
+                   bg=CARD, fg=TEXT, selectcolor=PANEL,
+                   activebackground=CARD, activeforeground=ACCENT,
+                   font=FONT_BODY)
+    fast_cb.pack(anchor="w")
+    tk.Label(perf_inner,
+             text="  ปิด Fast Mode เพื่อจับรถเล็ก/มอเตอร์ไซค์ได้แม่นขึ้น",
+             font=FONT_SMALL, bg=CARD, fg=MUTED).pack(anchor="w", pady=(2, 0))
 
-    # Export row
-    csv_row = tk.Frame(content, bg=BG)
-    csv_row.grid(row=15, column=0, sticky="ew", pady=(6, 0))
-    export_label = tk.Label(csv_row, text="📊  Export Excel:", font=FONT_BODY,
-                             bg=BG, fg=MUTED)
-    export_label.pack(side="left", padx=(0, 8))
-    make_entry(csv_row, export_var, width=28).pack(side="left", ipady=4)
+    # ── RIGHT: How to use ────────────────
+    tip_card = card(col_right)
+    tip_card.pack(fill="x")
+    tip_inner = tk.Frame(tip_card, bg=CARD, padx=12, pady=10)
+    tip_inner.pack(fill="x")
 
-    # ======== START BUTTON =========
-    btn_frame = tk.Frame(root, bg=BG)
-    btn_frame.pack(fill="x", padx=24, pady=(6, 16))
-    start_btn = tk.Button(btn_frame, text="🚀  เริ่มนับยานพาหนะ  (Start)",
+    section_title(tip_inner, "💡  วิธีใช้งาน")
+    tips = [
+        "① เลือกแหล่งวิดีโอ (ไฟล์ หรือ URL)",
+        "② ตั้งจำนวน + ชื่อเส้นนับ",
+        "③ กด Start แล้ววาดเส้นบนภาพ",
+        "④ กด  C  ยืนยันเส้น,  Q  หยุด",
+    ]
+    for t in tips:
+        tk.Label(tip_inner, text=t, font=FONT_SMALL, bg=CARD,
+                 fg=MUTED, anchor="w").pack(fill="x")
+
+    # ──────────────────────────────────────
+    # FOOTER — START BUTTON
+    # ──────────────────────────────────────
+    footer = tk.Frame(root, bg=BG)
+    footer.pack(fill="x", padx=14, pady=(4, 12))
+
+    start_btn = tk.Button(footer, text="🚀  เริ่มนับยานพาหนะ  (Start Counting)",
                           font=FONT_BTN, bg=BTN_GREEN, fg="white",
                           activebackground=BTN_HOVER, activeforeground="white",
-                          relief="flat", cursor="hand2", padx=20, pady=10,
+                          relief="flat", cursor="hand2", padx=20, pady=11,
                           command=start_processing)
     start_btn.pack(fill="x")
     start_btn.bind("<Enter>", on_enter_btn)
